@@ -49,6 +49,12 @@ pub struct ProfileWriter {
     heavy_hitter_context_sample_limit: usize,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbStatSummary {
+    pub top_table: String,
+    pub mb: f64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ObjectSamplePriorityLimits {
     pub canonical_path: usize,
@@ -116,6 +122,31 @@ impl ProfileWriter {
     pub fn create_indexes(&self) -> Result<()> {
         crate::sqlite::schema::create_indexes(&self.conn)?;
         Ok(())
+    }
+
+    pub fn dbstat_summary(&self) -> Option<DbStatSummary> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "\
+                SELECT name, SUM(pgsize) AS bytes
+                FROM dbstat
+                GROUP BY name
+                ORDER BY bytes DESC
+                LIMIT 1
+                ",
+            )
+            .ok()?;
+
+        stmt.query_row([], |row| {
+            let top_table: String = row.get(0)?;
+            let bytes: i64 = row.get(1)?;
+            Ok(DbStatSummary {
+                top_table,
+                mb: bytes as f64 / (1024.0 * 1024.0),
+            })
+        })
+        .ok()
     }
 
     pub fn write_source_summary(

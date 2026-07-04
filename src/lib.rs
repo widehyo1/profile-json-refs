@@ -23,7 +23,7 @@ use serde_json::{Map, Value};
 use crate::config::{InputFormat, ProfileConfig};
 use crate::error::Result;
 use crate::field::accumulator::{FieldValueAccumulator, ShapeFieldRow};
-use crate::perf::timer::{PerfBucket, PerfLog};
+use crate::perf::timer::{PerfBucket, PerfDestination, PerfLog};
 use crate::refs::resolver::RefsResolver;
 use crate::scan::path::SourcePath;
 use crate::scan::visitor::ScanVisitor;
@@ -37,6 +37,8 @@ pub struct ProfileReport {
     pub elapsed: Duration,
     pub warnings: Vec<ProfileWarning>,
     pub perf_buckets: Vec<PerfBucket>,
+    pub perf_enabled: bool,
+    pub perf_log_file: Option<PathBuf>,
     pub quiet: bool,
 }
 
@@ -100,7 +102,12 @@ pub const W_CANONICAL_PATH_UNAVAILABLE: &str = "W_CANONICAL_PATH_UNAVAILABLE";
 pub fn run(config: ProfileConfig) -> Result<ProfileReport> {
     let start = Instant::now();
     config.validate()?;
-    let mut perf_log = PerfLog::new(config.perf_log);
+    let perf_destination = config
+        .perf_log_file
+        .clone()
+        .map(PerfDestination::File)
+        .unwrap_or(PerfDestination::Stderr);
+    let mut perf_log = PerfLog::new(config.perf_log, perf_destination)?;
 
     let resolved_format = resolve_input_format(&config);
     let source_format = resolved_format.as_source_summary_str();
@@ -127,6 +134,7 @@ pub fn run(config: ProfileConfig) -> Result<ProfileReport> {
             crate::scan::jsonl::scan_jsonl_file(BufReader::new(file), &mut visitor)?;
         }
     }
+    visitor.emit_scan_progress();
     visitor.record_perf("scan.read_parse_walk", scan_start.elapsed());
 
     visitor.finish(source_format, out_path, quiet, start.elapsed())
@@ -205,6 +213,36 @@ impl ProfileRunVisitor {
         self.perf_log.record(name, duration);
     }
 
+    fn emit_scan_progress(&mut self) {
+        self.perf_log.event(&format!(
+            "phase=scan.progress documents={} objects={} arrays={} scalars={}",
+            self.counters.total_document_count,
+            self.counters.total_object_count,
+            self.counters.total_array_count,
+            self.counters.total_scalar_count
+        ));
+    }
+
+    fn emit_flush_chunk(&mut self, chunk: &ProfileChunk) {
+        self.perf_log.event(&format!(
+            "phase=flush.chunk shapes={} fields={} object_samples={} value_samples={}",
+            chunk.shapes.len(),
+            chunk.shape_fields.len(),
+            chunk.object_samples.len(),
+            chunk.value_samples.len()
+        ));
+    }
+
+    fn emit_dbstat(&mut self) {
+        match self.writer.dbstat_summary() {
+            Some(summary) => self.perf_log.event(&format!(
+                "phase=sqlite.dbstat top_table={} mb={:.3}",
+                summary.top_table, summary.mb
+            )),
+            None => self.perf_log.event("phase=sqlite.dbstat unavailable=1"),
+        }
+    }
+
     fn finish(
         mut self,
         source_format: &str,
@@ -233,14 +271,19 @@ impl ProfileRunVisitor {
             final_chunk.field_values.extend(output.field_values);
             final_chunk.value_samples.extend(output.value_samples);
         }
-        self.writer.flush_chunk(final_chunk)?;
+        self.flush_chunk(final_chunk)?;
         self.perf_log.record("sqlite.prune_samples", Duration::ZERO);
         self.perf_log
             .time_result("sqlite.indexes", || self.writer.create_indexes())?;
         let summary = self
             .writer
             .write_source_summary(source_format, self.counters)?;
+        if self.config.perf_log_dbstat {
+            self.emit_dbstat();
+        }
         self.perf_log.record("total", elapsed);
+        let perf_enabled = self.config.perf_log;
+        let perf_log_file = self.config.perf_log_file.clone();
         let perf_buckets = self.perf_log.into_buckets();
 
         Ok(ProfileReport {
@@ -249,6 +292,8 @@ impl ProfileRunVisitor {
             elapsed,
             warnings: self.warnings,
             perf_buckets,
+            perf_enabled,
+            perf_log_file,
             quiet,
         })
     }
@@ -310,6 +355,13 @@ impl ProfileRunVisitor {
 
     fn flush_pending_samples(&mut self) -> Result<()> {
         let chunk = self.drain_pending_chunk();
+        self.flush_chunk(chunk)
+    }
+
+    fn flush_chunk(&mut self, chunk: ProfileChunk) -> Result<()> {
+        if !chunk.is_empty() {
+            self.emit_flush_chunk(&chunk);
+        }
         self.writer.flush_chunk(chunk)
     }
 

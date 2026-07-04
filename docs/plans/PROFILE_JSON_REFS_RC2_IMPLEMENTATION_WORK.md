@@ -626,7 +626,7 @@ PASS once value priority rows are bounded to rc.2 defaults and heavy_hitter_cont
 - Modify: `src/lib.rs`
 - Modify: `src/sqlite/writer.rs`
 
-- [ ] **Step 1: Add perf-log-file test**
+- [x] **Step 1: Add perf-log-file test**
 
 Add to `tests/perf_log.rs`:
 
@@ -655,7 +655,7 @@ fn perf_log_file_writes_events_outside_stderr() {
 }
 ```
 
-- [ ] **Step 2: Add dbstat opt-in test**
+- [x] **Step 2: Add dbstat opt-in test**
 
 Add to `tests/perf_log.rs`:
 
@@ -689,7 +689,7 @@ fn perf_log_dbstat_is_opt_in() {
 }
 ```
 
-- [ ] **Step 3: Run tests and verify red**
+- [x] **Step 3: Run tests and verify red**
 
 Run:
 
@@ -703,7 +703,7 @@ Expected:
 FAIL until perf destination and progress/dbstat events are implemented
 ```
 
-- [ ] **Step 4: Implement a flushed perf writer**
+- [x] **Step 4: Implement a flushed perf writer**
 
 In `src/perf/timer.rs`, keep `PerfBucket` for final buckets and add a writer that owns either stderr or a file. Use `Box<dyn std::io::Write>`:
 
@@ -718,7 +718,7 @@ Expose a constructor returning `Result<PerfLog>` so file creation errors can fai
 
 Every event write must call `flush()`.
 
-- [ ] **Step 5: Emit progress events**
+- [x] **Step 5: Emit progress events**
 
 Emit at least these lines when `--perf-log` is active:
 
@@ -729,7 +729,7 @@ Emit at least these lines when `--perf-log` is active:
 
 It is acceptable for small tests to emit one progress event at final scan completion and one flush event per chunk.
 
-- [ ] **Step 6: Emit dbstat only when requested**
+- [x] **Step 6: Emit dbstat only when requested**
 
 When `perf_log_dbstat` is true, query SQLite `dbstat` after finalization and emit:
 
@@ -743,7 +743,7 @@ If `dbstat` is unavailable, emit:
 [perf] t=<seconds> phase=sqlite.dbstat unavailable=1
 ```
 
-- [ ] **Step 7: Verify green**
+- [x] **Step 7: Verify green**
 
 Run:
 

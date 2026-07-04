@@ -1,5 +1,5 @@
 use clap::Parser;
-use profile_json_refs::perf::timer::{PerfBucket, emit_buckets_stderr};
+use profile_json_refs::perf::timer::{PerfBucket, append_bucket};
 use profile_json_refs::{cli::CliArgs, config::ProfileConfig, run};
 use std::time::Instant;
 
@@ -18,13 +18,15 @@ fn main() {
             }
             let stdout_duration = stdout_start.elapsed();
 
-            if !report.perf_buckets.is_empty() {
-                let mut buckets = report.perf_buckets.clone();
-                buckets.push(PerfBucket {
+            if report.perf_enabled {
+                let bucket = PerfBucket {
                     name: "stdout.summary",
                     duration: stdout_duration,
-                });
-                emit_buckets_stderr(&buckets);
+                };
+                if let Err(err) = append_bucket(report.perf_log_file.as_deref(), &bucket) {
+                    eprintln!("ERROR failed to write perf log: {err}");
+                    std::process::exit(1);
+                }
             }
         }
         Err(err) => {

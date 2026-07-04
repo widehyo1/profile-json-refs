@@ -1,5 +1,7 @@
 # profile-json-refs
 
+> Release status: `v0.1.0-rc.2`. This candidate incorporates the large-input value-sampling performance fix and is intended to become `v0.1.0` after regression and large JSONL smoke validation.
+
 `profile-json-refs` is a value-level profiling tool for JSON and JSONL snapshots.
 
 It runs downstream of [`dump-json-refs`](https://github.com/widehyo1/dump-json-refs). `dump-json-refs` produces structural refs in `refs/schemas.sqlite`; `profile-json-refs` consumes that refs database together with the original JSON/JSONL source file and writes `profile.sqlite`.
@@ -182,6 +184,18 @@ Bounded exact counters:
 
 Approximate and sampled facts are always labeled. A missing value row does not necessarily mean the value was never observed; it may only mean it was not retained by the bounded profile.
 
+`v0.1.0-rc.2` uses safer large-input defaults:
+
+```text
+heavy_hitter_context_sample_limit = 0
+value_json_limit_bytes = 1024
+parent_object_json_limit_bytes = 1024
+priority_sample_limit_per_field_profile = 4
+value_text_limit_bytes = 512
+```
+
+Heavy hitter context rows are disabled by default. The Space-Saving tracker still produces heavy hitter candidate facts in `prof_field_value`.
+
 ---
 
 ## Basic usage
@@ -189,6 +203,9 @@ Approximate and sampled facts are always labeled. A missing value row does not n
 ```bash
 dump-json-refs data.jsonl --jsonl --outdir refs
 profile-json-refs data.jsonl --jsonl
+
+# Large-run diagnostics
+profile-json-refs data.jsonl --jsonl --perf-log --perf-log-file perf.log
 ```
 
 Defaults:

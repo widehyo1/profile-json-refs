@@ -49,6 +49,14 @@ pub struct CliArgs {
     #[arg(long = "perf-log")]
     pub perf_log: bool,
 
+    /// Write perf-log events to a file instead of stderr.
+    #[arg(long = "perf-log-file", value_name = "FILE")]
+    pub perf_log_file: Option<PathBuf>,
+
+    /// Include optional SQLite dbstat diagnostics in perf-log output.
+    #[arg(long = "perf-log-dbstat")]
+    pub perf_log_dbstat: bool,
+
     /// Suppress normal stdout on success.
     #[arg(long)]
     pub quiet: bool,

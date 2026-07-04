@@ -14,6 +14,8 @@ pub struct ProfileConfig {
     pub input_format: InputFormat,
     pub quiet: bool,
     pub perf_log: bool,
+    pub perf_log_file: Option<PathBuf>,
+    pub perf_log_dbstat: bool,
     pub sampling: SamplingConfig,
     pub value_profile: ValueProfileConfig,
     pub flush: FlushConfig,
@@ -66,6 +68,8 @@ impl ProfileConfig {
             input_format: InputFormat::Auto,
             quiet: false,
             perf_log: false,
+            perf_log_file: None,
+            perf_log_dbstat: false,
             sampling: SamplingConfig::default(),
             value_profile: ValueProfileConfig::default(),
             flush: FlushConfig::default(),
@@ -176,10 +180,17 @@ impl ProfileConfig {
             self.quiet = quiet;
         }
 
-        if let Some(perf) = file.perf
-            && let Some(log) = perf.log
-        {
-            self.perf_log = log;
+        if let Some(perf) = file.perf {
+            if let Some(log) = perf.log {
+                self.perf_log = log;
+            }
+            if let Some(file) = perf.file {
+                self.perf_log_file = Some(file);
+                self.perf_log = true;
+            }
+            if let Some(dbstat) = perf.dbstat {
+                self.perf_log_dbstat = dbstat;
+            }
         }
 
         if let Some(sampling) = file.sampling {
@@ -306,6 +317,13 @@ impl ProfileConfig {
         if args.perf_log {
             self.perf_log = true;
         }
+        if let Some(file) = args.perf_log_file {
+            self.perf_log_file = Some(file);
+            self.perf_log = true;
+        }
+        if args.perf_log_dbstat {
+            self.perf_log_dbstat = true;
+        }
     }
 }
 
@@ -317,10 +335,10 @@ impl Default for SamplingConfig {
             site_priority_limit: 1,
             field_set_priority_limit: 2,
             type_set_priority_limit: 4,
-            value_json_limit_bytes: 4 * 1024,
-            parent_object_json_limit_bytes: 16 * 1024,
-            value_priority_limit_per_field_profile: 8,
-            heavy_hitter_context_sample_limit: 1,
+            value_json_limit_bytes: 1024,
+            parent_object_json_limit_bytes: 1024,
+            value_priority_limit_per_field_profile: 4,
+            heavy_hitter_context_sample_limit: 0,
         }
     }
 }
@@ -328,7 +346,7 @@ impl Default for SamplingConfig {
 impl Default for ValueProfileConfig {
     fn default() -> Self {
         Self {
-            value_text_limit_bytes: 1024,
+            value_text_limit_bytes: 512,
             exact_distinct_threshold: 4096,
             exact_value_bytes_per_field_profile: 1024 * 1024,
             global_exact_value_bytes_budget: 256 * 1024 * 1024,
@@ -433,6 +451,8 @@ struct StdoutConfig {
 #[serde(deny_unknown_fields)]
 struct PerfConfig {
     log: Option<bool>,
+    file: Option<PathBuf>,
+    dbstat: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]

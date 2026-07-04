@@ -42,6 +42,63 @@ fn defaults_use_contract_paths_and_auto_format() {
     assert_eq!(config.input_format, InputFormat::Auto);
     assert!(!config.quiet);
     assert!(!config.perf_log);
+    assert_eq!(config.sampling.value_json_limit_bytes, 1024);
+    assert_eq!(config.sampling.parent_object_json_limit_bytes, 1024);
+    assert_eq!(config.sampling.value_priority_limit_per_field_profile, 4);
+    assert_eq!(config.sampling.heavy_hitter_context_sample_limit, 0);
+    assert_eq!(config.value_profile.value_text_limit_bytes, 512);
+    assert!(config.perf_log_file.is_none());
+    assert!(!config.perf_log_dbstat);
+}
+
+#[test]
+fn perf_log_file_and_dbstat_parse_into_config() {
+    let config = parse_config(&[
+        "profile-json-refs",
+        "data.jsonl",
+        "--perf-log",
+        "--perf-log-file",
+        "target/tmp/perf.log",
+        "--perf-log-dbstat",
+    ]);
+
+    assert!(config.perf_log);
+    assert_eq!(
+        config.perf_log_file,
+        Some(PathBuf::from("target/tmp/perf.log"))
+    );
+    assert!(config.perf_log_dbstat);
+}
+
+#[test]
+fn perf_file_and_dbstat_yaml_fields_are_supported() {
+    let dir = unique_temp_dir("perf-yaml");
+    let config_path = dir.join("profile.yaml");
+    let perf_path = dir.join("perf.log");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+perf:
+  log: true
+  file: {}
+  dbstat: true
+"#,
+            perf_path.display()
+        ),
+    )
+    .expect("write config");
+
+    let config = parse_config(&[
+        "profile-json-refs",
+        "data.json",
+        "--config",
+        config_path.to_str().expect("utf8 path"),
+    ]);
+
+    assert!(config.perf_log);
+    assert_eq!(config.perf_log_file, Some(perf_path));
+    assert!(config.perf_log_dbstat);
 }
 
 #[test]

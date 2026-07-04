@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod sqlite;
 
 use std::path::PathBuf;
 use std::time::Duration;

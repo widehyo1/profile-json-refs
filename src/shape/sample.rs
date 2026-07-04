@@ -183,6 +183,13 @@ impl ObjectSampleAccumulator {
             observation.document_index,
             observation.source_path,
         );
+        let top_k = self
+            .priority
+            .entry((scope, key.to_string()))
+            .or_insert_with(|| TopK::new(limit));
+        if !top_k.should_accept(priority) {
+            return Ok(());
+        }
         let row = make_object_sample_row(
             scope,
             key,
@@ -190,10 +197,7 @@ impl ObjectSampleAccumulator {
             observation,
             Some(priority),
         )?;
-        self.priority
-            .entry((scope, key.to_string()))
-            .or_insert_with(|| TopK::new(limit))
-            .push(ObjectSampleCandidate { priority, row });
+        top_k.push(ObjectSampleCandidate { priority, row });
         Ok(())
     }
 }
@@ -347,6 +351,17 @@ impl TopK {
         if compare_candidates(&candidate, worst_candidate).is_lt() {
             self.candidates[worst_index] = candidate;
         }
+    }
+
+    fn should_accept(&self, priority: u64) -> bool {
+        if self.candidates.len() < self.limit {
+            return true;
+        }
+        self.candidates
+            .iter()
+            .map(|candidate| candidate.priority)
+            .max()
+            .is_some_and(|worst| priority < worst)
     }
 
     fn ranked_rows(&self) -> Vec<ObjectSampleRow> {

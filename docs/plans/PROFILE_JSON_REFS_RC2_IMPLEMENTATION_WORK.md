@@ -492,7 +492,7 @@ If the rc2 diagnostic test still reports `value_priority_violations`, continue t
 - Test: `tests/value_samples.rs`
 - Test: `tests/object_samples.rs`
 
-- [ ] **Step 1: Add PrioritySampler admission tests**
+- [x] **Step 1: Add PrioritySampler admission tests**
 
 Add to `tests/sketches.rs`:
 
@@ -510,7 +510,7 @@ fn priority_sampler_reports_admission_before_materialization() {
 }
 ```
 
-- [ ] **Step 2: Run test and verify red**
+- [x] **Step 2: Run test and verify red**
 
 Run:
 
@@ -524,7 +524,7 @@ Expected:
 FAIL because should_accept is missing
 ```
 
-- [ ] **Step 3: Implement should_accept**
+- [x] **Step 3: Implement should_accept**
 
 In `src/sketch/priority.rs`, add:
 
@@ -544,7 +544,7 @@ In `src/sketch/priority.rs`, add:
     }
 ```
 
-- [ ] **Step 4: Use should_accept for value samples**
+- [x] **Step 4: Use should_accept for value samples**
 
 In `src/value/sample.rs`, change priority enqueue logic to:
 
@@ -564,7 +564,7 @@ In `src/value/sample.rs`, change priority enqueue logic to:
         }
 ```
 
-- [ ] **Step 5: Use admission check for object samples**
+- [x] **Step 5: Use admission check for object samples**
 
 In `src/shape/sample.rs`, add to `TopK`:
 
@@ -601,7 +601,7 @@ Then in `enqueue_priority`, get or create `top_k` before row materialization:
         top_k.push(ObjectSampleCandidate { priority, row });
 ```
 
-- [ ] **Step 6: Verify rc.2 diagnostic bound**
+- [x] **Step 6: Verify rc.2 diagnostic bound**
 
 Run:
 

@@ -61,6 +61,18 @@ fn space_saving_keeps_bounded_heavy_hitter_candidates() {
 }
 
 #[test]
+fn priority_sampler_reports_admission_before_materialization() {
+    let mut sampler = profile_json_refs::sketch::priority::PrioritySampler::new(2);
+
+    assert!(sampler.should_accept(20));
+    sampler.push(20, "twenty");
+    assert!(sampler.should_accept(10));
+    sampler.push(10, "ten");
+    assert!(sampler.should_accept(5));
+    assert!(!sampler.should_accept(30));
+}
+
+#[test]
 fn approximate_profile_uses_hll_and_bounded_heavy_hitter_rows() {
     let config = profile_config();
     let parent = json!({"field": "value"});

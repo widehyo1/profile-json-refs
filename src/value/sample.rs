@@ -97,14 +97,16 @@ impl ValueSampleAccumulator {
 
         if self.priority_limit > 0 {
             let priority = sample_priority(field_profile_id, document_index, source_path);
-            self.priority.push(
-                priority,
-                make_value_sample_row(
-                    ValueSampleKind::PrioritySample,
-                    &observation,
-                    Some(priority),
-                ),
-            );
+            if self.priority.should_accept(priority) {
+                self.priority.push(
+                    priority,
+                    make_value_sample_row(
+                        ValueSampleKind::PrioritySample,
+                        &observation,
+                        Some(priority),
+                    ),
+                );
+            }
         }
     }
 

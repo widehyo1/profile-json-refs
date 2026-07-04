@@ -55,6 +55,20 @@ where
         }
     }
 
+    pub fn should_accept(&self, priority: u64) -> bool {
+        if self.limit == 0 {
+            return false;
+        }
+        if self.items.len() < self.limit {
+            return true;
+        }
+        self.items
+            .iter()
+            .map(|item| item.priority)
+            .max()
+            .is_some_and(|worst| priority < worst)
+    }
+
     pub fn ranked(&self) -> Vec<RankedPriorityItem<T>> {
         let mut items = self.items.clone();
         items.sort_by(compare_priority);

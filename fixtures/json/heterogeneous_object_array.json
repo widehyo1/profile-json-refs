@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"id": 1, "type": "A", "amount": 100},
+    {"id": 2, "type": "B", "error": "invalid"},
+    {"id": 3, "type": "A", "amount": "200"}
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "documents": [
+    {"id": 1, "status": "active", "amount": 100},
+    {"id": 2, "status": "inactive", "amount": 200}
+  ]
+}

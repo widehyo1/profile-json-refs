@@ -1,0 +1,18 @@
+sampling:
+  object:
+    canonical_path:
+      priority_sample_limit: 1
+    site_path:
+      priority_sample_limit: 1
+    field_set:
+      priority_sample_limit: 1
+    type_set:
+      priority_sample_limit: 1
+  value:
+    priority_sample_limit_per_field_profile: 1
+    heavy_hitter_context_sample_limit: 1
+flush:
+  chunk_object_sample_rows: 1
+  chunk_value_sample_rows: 1
+  chunk_shape_rows: 1
+  chunk_field_rows: 1

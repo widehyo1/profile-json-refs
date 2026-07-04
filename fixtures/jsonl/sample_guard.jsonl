@@ -1,0 +1,6 @@
+{"kind":"a","payload":{"id":1}}
+{"kind":"b","payload":{"id":2,"flag":true}}
+{"kind":"c","payload":{"code":"x"}}
+{"kind":"d","payload":{"values":[1,2,3]}}
+{"kind":"e","payload":{"nested":{"id":5}}}
+{"kind":"f","payload":{"id":6,"code":"z","extra":{}}}

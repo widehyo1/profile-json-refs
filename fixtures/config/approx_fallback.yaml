@@ -1,0 +1,6 @@
+value_profile:
+  exact_distinct_threshold: 16
+  exact_value_bytes_per_field_profile: 4096
+  global_exact_value_bytes_budget: 65536
+  hll_precision: 10
+  heavy_hitter_limit: 8

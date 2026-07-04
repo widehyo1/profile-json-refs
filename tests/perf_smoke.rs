@@ -44,7 +44,7 @@ sampling:
       priority_sample_limit: 1
   value:
     priority_sample_limit_per_field_profile: 2
-    heavy_hitter_context_sample_limit: 1
+    heavy_hitter_context_sample_limit: 0
 flush:
   chunk_object_sample_rows: 2
   chunk_value_sample_rows: 2
@@ -114,7 +114,7 @@ value_profile:
             "
         ) <= 2
     );
-    assert!(
+    assert_eq!(
         max_group_count(
             &conn,
             "\
@@ -126,7 +126,8 @@ value_profile:
                 GROUP BY field_profile_id, value_hash
             )
             "
-        ) <= 1
+        ),
+        0
     );
     assert!(
         max_group_count(

@@ -17,6 +17,8 @@ fn profile_config() -> ProfileConfig {
         input_format: InputFormat::Json,
         quiet: false,
         perf_log: false,
+        perf_log_file: None,
+        perf_log_dbstat: false,
         sampling: SamplingConfig::default(),
         value_profile: ValueProfileConfig::default(),
         flush: FlushConfig::default(),

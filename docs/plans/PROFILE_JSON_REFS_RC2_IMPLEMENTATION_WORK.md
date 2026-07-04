@@ -307,7 +307,7 @@ all cli_contract tests pass
 - Modify: `src/value/sample.rs`
 - Modify: `src/sqlite/writer.rs`
 
-- [ ] **Step 1: Replace the old heavy hitter context test**
+- [x] **Step 1: Replace the old heavy hitter context test**
 
 In `tests/value_samples.rs`, replace `heavy_hitter_context_samples_are_bounded` with:
 
@@ -337,7 +337,7 @@ fn heavy_hitter_context_samples_are_not_emitted_in_rc2() {
 }
 ```
 
-- [ ] **Step 2: Update the profile_config helper**
+- [x] **Step 2: Update the profile_config helper**
 
 In `tests/value_samples.rs`, change:
 
@@ -351,7 +351,7 @@ to:
             heavy_hitter_context_sample_limit: 0,
 ```
 
-- [ ] **Step 3: Update perf smoke expectations**
+- [x] **Step 3: Update perf smoke expectations**
 
 In `tests/perf_smoke.rs`, set fixture config:
 
@@ -379,7 +379,7 @@ Replace the `<= 1` assertion with:
     );
 ```
 
-- [ ] **Step 4: Run tests and verify red**
+- [x] **Step 4: Run tests and verify red**
 
 Run:
 
@@ -393,7 +393,7 @@ Expected:
 FAIL until scan-time heavy_hitter_context generation is removed
 ```
 
-- [ ] **Step 5: Remove scan-time generation**
+- [x] **Step 5: Remove scan-time generation**
 
 In `src/field/accumulator.rs`, delete this block from `FieldValueAccumulator::observe`:
 
@@ -421,7 +421,7 @@ Replace it with:
 
 Delete the `self.value_samples.retain_heavy_hitter_keys(&active_keys);` call.
 
-- [ ] **Step 6: Remove unused context state**
+- [x] **Step 6: Remove unused context state**
 
 In `src/value/sample.rs`, remove:
 
@@ -452,7 +452,7 @@ retain_heavy_hitter_keys
 
 Remove context row extension from `rows()` and context counting from `pending_row_count()`.
 
-- [ ] **Step 7: Skip disabled prune**
+- [x] **Step 7: Skip disabled prune**
 
 In `src/sqlite/writer.rs`, update `flush_chunk`:
 
@@ -462,7 +462,7 @@ In `src/sqlite/writer.rs`, update `flush_chunk`:
         }
 ```
 
-- [ ] **Step 8: Verify green**
+- [x] **Step 8: Verify green**
 
 Run:
 

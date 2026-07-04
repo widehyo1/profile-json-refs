@@ -168,6 +168,8 @@ fn test_config(out: &Path) -> ProfileConfig {
         input_format: InputFormat::Json,
         quiet: false,
         perf_log: false,
+        perf_log_file: None,
+        perf_log_dbstat: false,
         sampling: SamplingConfig {
             canonical_priority_limit: 1,
             site_priority_limit: 1,
@@ -189,6 +191,8 @@ fn run_config(input: &Path, refs: &Path, out: &Path) -> ProfileConfig {
         input_format: InputFormat::Json,
         quiet: false,
         perf_log: false,
+        perf_log_file: None,
+        perf_log_dbstat: false,
         sampling: SamplingConfig {
             canonical_priority_limit: 1,
             site_priority_limit: 1,

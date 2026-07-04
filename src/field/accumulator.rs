@@ -140,20 +140,11 @@ impl FieldValueAccumulator {
 
         if self.heavy_hitters.contains_key(&key) {
             self.heavy_hitter_values.insert(key.clone(), value.clone());
-            self.value_samples.observe_heavy_hitter_context(
-                document_index,
-                source_path,
-                &self.field_profile_id,
-                value,
-                parent_object,
-                config,
-            );
         }
 
         let active_keys = self.heavy_hitters.keys();
         self.heavy_hitter_values
             .retain(|key, _| active_keys.contains(key));
-        self.value_samples.retain_heavy_hitter_keys(&active_keys);
         self.value_samples.observe(
             document_index,
             source_path,

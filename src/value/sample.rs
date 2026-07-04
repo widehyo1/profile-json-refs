@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use serde_json::Value;
 
 use crate::config::ProfileConfig;
 use crate::sketch::priority::PrioritySampler;
-use crate::value::identity::{ValueKey, value_hash, value_key};
+use crate::value::identity::value_hash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ValueSampleKind {
@@ -44,21 +44,17 @@ pub struct ValueSampleRow {
 #[derive(Debug, Clone)]
 pub struct ValueSampleAccumulator {
     priority_limit: usize,
-    heavy_hitter_context_limit: usize,
     seen_once: HashSet<ValueSampleKind>,
     priority: PrioritySampler<ValueSampleRow>,
-    heavy_hitter_context: HashMap<ValueKey, Vec<ValueSampleRow>>,
     rows: Vec<ValueSampleRow>,
 }
 
 impl ValueSampleAccumulator {
-    pub fn new(priority_limit: usize, heavy_hitter_context_limit: usize) -> Self {
+    pub fn new(priority_limit: usize, _heavy_hitter_context_limit: usize) -> Self {
         Self {
             priority_limit,
-            heavy_hitter_context_limit,
             seen_once: HashSet::new(),
             priority: PrioritySampler::new(priority_limit),
-            heavy_hitter_context: HashMap::new(),
             rows: Vec::new(),
         }
     }
@@ -112,59 +108,12 @@ impl ValueSampleAccumulator {
         }
     }
 
-    pub fn observe_heavy_hitter_context(
-        &mut self,
-        document_index: u64,
-        source_path: &str,
-        field_profile_id: &str,
-        value: &Value,
-        parent_object: &Value,
-        config: &ProfileConfig,
-    ) {
-        if self.heavy_hitter_context_limit == 0 {
-            return;
-        }
-
-        let key = value_key(value);
-        let rows = self.heavy_hitter_context.entry(key).or_default();
-        if rows.len() >= self.heavy_hitter_context_limit {
-            return;
-        }
-        let observation = ValueSampleObservation {
-            document_index,
-            source_path,
-            field_profile_id,
-            value,
-            parent_object,
-            config,
-        };
-        rows.push(make_value_sample_row(
-            ValueSampleKind::HeavyHitterContext,
-            &observation,
-            None,
-        ));
-    }
-
-    pub fn retain_heavy_hitter_keys(&mut self, active_keys: &[ValueKey]) {
-        let active: HashSet<_> = active_keys.iter().cloned().collect();
-        self.heavy_hitter_context
-            .retain(|key, _| active.contains(key));
-    }
-
     pub fn rows(&self) -> Vec<ValueSampleRow> {
         let mut rows = self.rows.clone();
         for ranked in self.priority.ranked() {
             let mut row = ranked.value;
             row.sample_rank = Some(ranked.rank);
             rows.push(row);
-        }
-
-        let mut context_keys: Vec<_> = self.heavy_hitter_context.keys().cloned().collect();
-        context_keys.sort();
-        for key in context_keys {
-            if let Some(context_rows) = self.heavy_hitter_context.get(&key) {
-                rows.extend(context_rows.iter().cloned());
-            }
         }
 
         rows.sort_by(|left, right| {
@@ -182,18 +131,11 @@ impl ValueSampleAccumulator {
         let rows = self.rows();
         self.rows.clear();
         self.priority.clear();
-        self.heavy_hitter_context.clear();
         rows
     }
 
     pub fn pending_row_count(&self) -> usize {
-        self.rows.len()
-            + self.priority.len()
-            + self
-                .heavy_hitter_context
-                .values()
-                .map(Vec::len)
-                .sum::<usize>()
+        self.rows.len() + self.priority.len()
     }
 }
 

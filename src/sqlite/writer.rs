@@ -106,7 +106,9 @@ impl ProfileWriter {
 
         self.prune_object_priority_samples()?;
         self.prune_value_priority_samples()?;
-        self.prune_heavy_hitter_context_samples()?;
+        if self.heavy_hitter_context_sample_limit > 0 {
+            self.prune_heavy_hitter_context_samples()?;
+        }
 
         Ok(())
     }

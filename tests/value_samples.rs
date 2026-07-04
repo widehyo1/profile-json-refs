@@ -15,9 +15,11 @@ fn profile_config() -> ProfileConfig {
         input_format: InputFormat::Json,
         quiet: false,
         perf_log: false,
+        perf_log_file: None,
+        perf_log_dbstat: false,
         sampling: SamplingConfig {
             value_priority_limit_per_field_profile: 2,
-            heavy_hitter_context_sample_limit: 1,
+            heavy_hitter_context_sample_limit: 0,
             ..SamplingConfig::default()
         },
         value_profile: ValueProfileConfig {
@@ -80,8 +82,9 @@ fn value_priority_samples_are_bounded() {
 }
 
 #[test]
-fn heavy_hitter_context_samples_are_bounded() {
-    let config = profile_config();
+fn heavy_hitter_context_samples_are_not_emitted_in_rc2() {
+    let mut config = profile_config();
+    config.sampling.heavy_hitter_context_sample_limit = 4;
     let mut accumulator = FieldValueAccumulator::new("field-a".to_string(), &config);
 
     for index in 0..10 {
@@ -99,5 +102,5 @@ fn heavy_hitter_context_samples_are_bounded() {
         .iter()
         .filter(|row| row.sample_kind == ValueSampleKind::HeavyHitterContext)
         .count();
-    assert!(context_count <= config.sampling.heavy_hitter_context_sample_limit);
+    assert_eq!(context_count, 0);
 }

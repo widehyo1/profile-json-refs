@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -9,9 +10,9 @@ use crate::error::Result;
 use crate::field::accumulator::ShapeFieldRow;
 use crate::field::summary::FieldSummary;
 use crate::shape::accumulator::ShapeRow;
-use crate::shape::sample::{ObjectSampleRow, SampleScope};
+use crate::shape::sample::{ObjectSampleKind, ObjectSampleRow, SampleScope};
 use crate::value::exact_counter::FieldValueRow;
-use crate::value::sample::ValueSampleRow;
+use crate::value::sample::{ValueSampleKind, ValueSampleRow};
 
 #[derive(Debug, Default)]
 pub struct ProfileChunk {
@@ -21,6 +22,46 @@ pub struct ProfileChunk {
     pub field_summaries: Vec<FieldSummary>,
     pub field_values: Vec<FieldValueRow>,
     pub value_samples: Vec<ValueSampleRow>,
+}
+
+#[derive(Debug, Default)]
+struct TouchedSampleKeys {
+    object_priority: BTreeSet<(SampleScope, String)>,
+    value_priority_fields: BTreeSet<String>,
+    heavy_hitter_context: BTreeSet<(String, String)>,
+}
+
+impl TouchedSampleKeys {
+    fn from_chunk(chunk: &ProfileChunk) -> Self {
+        let object_priority = chunk
+            .object_samples
+            .iter()
+            .filter(|row| row.sample_kind == ObjectSampleKind::PrioritySample)
+            .map(|row| (row.sample_scope, row.sample_key.clone()))
+            .collect();
+        let value_priority_fields = chunk
+            .value_samples
+            .iter()
+            .filter(|row| row.sample_kind == ValueSampleKind::PrioritySample)
+            .map(|row| row.field_profile_id.clone())
+            .collect();
+        let heavy_hitter_context = chunk
+            .value_samples
+            .iter()
+            .filter(|row| row.sample_kind == ValueSampleKind::HeavyHitterContext)
+            .filter_map(|row| {
+                row.value_hash
+                    .as_ref()
+                    .map(|hash| (row.field_profile_id.clone(), hash.clone()))
+            })
+            .collect();
+
+        Self {
+            object_priority,
+            value_priority_fields,
+            heavy_hitter_context,
+        }
+    }
 }
 
 impl ProfileChunk {
@@ -63,6 +104,17 @@ pub struct ObjectSamplePriorityLimits {
     pub type_set: usize,
 }
 
+impl ObjectSamplePriorityLimits {
+    fn limit_for(self, scope: SampleScope) -> usize {
+        match scope {
+            SampleScope::CanonicalPath => self.canonical_path,
+            SampleScope::SitePath => self.site_path,
+            SampleScope::FieldSet => self.field_set,
+            SampleScope::TypeSet => self.type_set,
+        }
+    }
+}
+
 impl ProfileWriter {
     pub fn open(path: &Path, config: &ProfileConfig) -> Result<Self> {
         if path.exists() {
@@ -101,6 +153,7 @@ impl ProfileWriter {
             return Ok(());
         }
 
+        let touched_samples = TouchedSampleKeys::from_chunk(&chunk);
         let tx = self.conn.transaction()?;
         Self::write_shapes(&tx, &chunk.shapes)?;
         Self::write_shape_fields(&tx, &chunk.shape_fields)?;
@@ -110,10 +163,10 @@ impl ProfileWriter {
         Self::write_value_samples(&tx, &chunk.value_samples)?;
         tx.commit()?;
 
-        self.prune_object_priority_samples()?;
-        self.prune_value_priority_samples()?;
+        self.prune_object_priority_samples(&touched_samples.object_priority)?;
+        self.prune_value_priority_samples(&touched_samples.value_priority_fields)?;
         if self.heavy_hitter_context_sample_limit > 0 {
-            self.prune_heavy_hitter_context_samples()?;
+            self.prune_heavy_hitter_context_samples(&touched_samples.heavy_hitter_context)?;
         }
 
         Ok(())
@@ -478,29 +531,19 @@ impl ProfileWriter {
         Ok(())
     }
 
-    fn prune_object_priority_samples(&self) -> Result<()> {
-        for (scope, limit) in [
-            (
-                SampleScope::CanonicalPath.as_sql_str(),
-                self.object_sample_priority_limits.canonical_path,
-            ),
-            (
-                SampleScope::SitePath.as_sql_str(),
-                self.object_sample_priority_limits.site_path,
-            ),
-            (
-                SampleScope::FieldSet.as_sql_str(),
-                self.object_sample_priority_limits.field_set,
-            ),
-            (
-                SampleScope::TypeSet.as_sql_str(),
-                self.object_sample_priority_limits.type_set,
-            ),
-        ] {
+    fn prune_object_priority_samples(
+        &self,
+        touched_keys: &BTreeSet<(SampleScope, String)>,
+    ) -> Result<()> {
+        for (scope, key) in touched_keys {
+            let scope_sql = scope.as_sql_str();
+            let limit = self.object_sample_priority_limits.limit_for(*scope);
             self.conn.execute(
                 "\
                 DELETE FROM prof_object_sample
                 WHERE sample_kind = 'priority_sample'
+                  AND sample_scope = ?1
+                  AND sample_key = ?2
                   AND object_sample_id IN (
                     SELECT object_sample_id
                     FROM (
@@ -513,44 +556,69 @@ impl ProfileWriter {
                       FROM prof_object_sample
                       WHERE sample_kind = 'priority_sample'
                         AND sample_scope = ?1
+                        AND sample_key = ?2
+                    )
+                    WHERE rn > ?3
+                  )
+                ",
+                params![scope_sql, key, limit as i64],
+            )?;
+
+            self.conn.execute(
+                "\
+                WITH ranked AS (
+                  SELECT
+                    object_sample_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY sample_scope, sample_key
+                      ORDER BY sample_priority ASC, document_index ASC, source_path ASC
+                    ) AS rn
+                  FROM prof_object_sample
+                  WHERE sample_kind = 'priority_sample'
+                    AND sample_scope = ?1
+                    AND sample_key = ?2
+                )
+                UPDATE prof_object_sample
+                SET sample_rank = (
+                  SELECT rn FROM ranked WHERE ranked.object_sample_id = prof_object_sample.object_sample_id
+                )
+                WHERE object_sample_id IN (SELECT object_sample_id FROM ranked)
+                ",
+                params![scope_sql, key],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn prune_value_priority_samples(&self, touched_fields: &BTreeSet<String>) -> Result<()> {
+        for field_profile_id in touched_fields {
+            self.conn.execute(
+                "\
+                DELETE FROM prof_field_value_sample
+                WHERE sample_kind = 'priority_sample'
+                  AND field_profile_id = ?1
+                  AND value_sample_id IN (
+                    SELECT value_sample_id
+                    FROM (
+                      SELECT
+                        value_sample_id,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY field_profile_id
+                          ORDER BY sample_priority ASC, document_index ASC, source_path ASC
+                        ) AS rn
+                      FROM prof_field_value_sample
+                      WHERE sample_kind = 'priority_sample'
+                        AND field_profile_id = ?1
                     )
                     WHERE rn > ?2
                   )
                 ",
-                params![scope, limit as i64],
+                params![field_profile_id, self.value_priority_limit as i64],
             )?;
-        }
 
-        self.conn.execute_batch(
-            "\
-            WITH ranked AS (
-              SELECT
-                object_sample_id,
-                ROW_NUMBER() OVER (
-                  PARTITION BY sample_scope, sample_key
-                  ORDER BY sample_priority ASC, document_index ASC, source_path ASC
-                ) AS rn
-              FROM prof_object_sample
-              WHERE sample_kind = 'priority_sample'
-            )
-            UPDATE prof_object_sample
-            SET sample_rank = (
-              SELECT rn FROM ranked WHERE ranked.object_sample_id = prof_object_sample.object_sample_id
-            )
-            WHERE object_sample_id IN (SELECT object_sample_id FROM ranked);
-            ",
-        )?;
-        Ok(())
-    }
-
-    fn prune_value_priority_samples(&self) -> Result<()> {
-        self.conn.execute(
-            "\
-            DELETE FROM prof_field_value_sample
-            WHERE sample_kind = 'priority_sample'
-              AND value_sample_id IN (
-                SELECT value_sample_id
-                FROM (
+            self.conn.execute(
+                "\
+                WITH ranked AS (
                   SELECT
                     value_sample_id,
                     ROW_NUMBER() OVER (
@@ -559,57 +627,55 @@ impl ProfileWriter {
                     ) AS rn
                   FROM prof_field_value_sample
                   WHERE sample_kind = 'priority_sample'
+                    AND field_profile_id = ?1
                 )
-                WHERE rn > ?1
-              )
-            ",
-            [self.value_priority_limit as i64],
-        )?;
-
-        self.conn.execute_batch(
-            "\
-            WITH ranked AS (
-              SELECT
-                value_sample_id,
-                ROW_NUMBER() OVER (
-                  PARTITION BY field_profile_id
-                  ORDER BY sample_priority ASC, document_index ASC, source_path ASC
-                ) AS rn
-              FROM prof_field_value_sample
-              WHERE sample_kind = 'priority_sample'
-            )
-            UPDATE prof_field_value_sample
-            SET sample_rank = (
-              SELECT rn FROM ranked WHERE ranked.value_sample_id = prof_field_value_sample.value_sample_id
-            )
-            WHERE value_sample_id IN (SELECT value_sample_id FROM ranked);
-            ",
-        )?;
+                UPDATE prof_field_value_sample
+                SET sample_rank = (
+                  SELECT rn FROM ranked WHERE ranked.value_sample_id = prof_field_value_sample.value_sample_id
+                )
+                WHERE value_sample_id IN (SELECT value_sample_id FROM ranked)
+                ",
+                [field_profile_id],
+            )?;
+        }
         Ok(())
     }
 
-    fn prune_heavy_hitter_context_samples(&self) -> Result<()> {
-        self.conn.execute(
-            "\
-            DELETE FROM prof_field_value_sample
-            WHERE sample_kind = 'heavy_hitter_context'
-              AND value_sample_id IN (
-                SELECT value_sample_id
-                FROM (
-                  SELECT
-                    value_sample_id,
-                    ROW_NUMBER() OVER (
-                      PARTITION BY field_profile_id, value_hash
-                      ORDER BY document_index ASC, source_path ASC
-                    ) AS rn
-                  FROM prof_field_value_sample
-                  WHERE sample_kind = 'heavy_hitter_context'
-                )
-                WHERE rn > ?1
-              )
-            ",
-            [self.heavy_hitter_context_sample_limit as i64],
-        )?;
+    fn prune_heavy_hitter_context_samples(
+        &self,
+        touched_keys: &BTreeSet<(String, String)>,
+    ) -> Result<()> {
+        for (field_profile_id, value_hash) in touched_keys {
+            self.conn.execute(
+                "\
+                DELETE FROM prof_field_value_sample
+                WHERE sample_kind = 'heavy_hitter_context'
+                  AND field_profile_id = ?1
+                  AND value_hash = ?2
+                  AND value_sample_id IN (
+                    SELECT value_sample_id
+                    FROM (
+                      SELECT
+                        value_sample_id,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY field_profile_id, value_hash
+                          ORDER BY document_index ASC, source_path ASC
+                        ) AS rn
+                      FROM prof_field_value_sample
+                      WHERE sample_kind = 'heavy_hitter_context'
+                        AND field_profile_id = ?1
+                        AND value_hash = ?2
+                    )
+                    WHERE rn > ?3
+                  )
+                ",
+                params![
+                    field_profile_id,
+                    value_hash,
+                    self.heavy_hitter_context_sample_limit as i64
+                ],
+            )?;
+        }
         Ok(())
     }
 }

@@ -765,7 +765,7 @@ all perf_log tests pass
 - Modify: `src/sqlite/writer.rs`
 - Test: `tests/sqlite_writer.rs`
 
-- [ ] **Step 1: Add a writer regression test**
+- [x] **Step 1: Add a writer regression test**
 
 Add a test in `tests/sqlite_writer.rs` that flushes multiple chunks with repeated priority samples for a small set of field profiles and verifies no priority rows exceed the configured limit after each flush:
 
@@ -846,7 +846,7 @@ fn value_priority_prune_keeps_rows_bounded_across_chunk_flushes() {
 }
 ```
 
-- [ ] **Step 2: Run test and verify current behavior**
+- [x] **Step 2: Run test and verify current behavior**
 
 Run:
 
@@ -860,7 +860,7 @@ Expected:
 PASS under current behavior, then keep passing after prune refactor
 ```
 
-- [ ] **Step 3: Implement scoped prune without changing results**
+- [x] **Step 3: Implement scoped prune without changing results**
 
 Keep correctness identical. Refactor `ProfileWriter::flush_chunk` to collect touched keys from `chunk.object_samples` and `chunk.value_samples`:
 
@@ -875,7 +875,7 @@ let touched_value_fields: BTreeSet<String> = chunk
 
 Use touched keys in prune SQL. If the touched set is empty, skip that prune.
 
-- [ ] **Step 4: Verify no behavior drift**
+- [x] **Step 4: Verify no behavior drift**
 
 Run:
 

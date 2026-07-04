@@ -305,6 +305,28 @@ fn value_sample_row(id: &str) -> ValueSampleRow {
     }
 }
 
+fn priority_value_sample_row(
+    id: &str,
+    field_profile_id: &str,
+    priority: u64,
+    document_index: u64,
+) -> ValueSampleRow {
+    ValueSampleRow {
+        value_sample_id: id.to_string(),
+        field_profile_id: field_profile_id.to_string(),
+        value_hash: Some(format!("value-{priority}")),
+        sample_kind: ValueSampleKind::PrioritySample,
+        document_index,
+        source_path: "$.id".to_string(),
+        value_json: Some(priority.to_string()),
+        value_json_truncated: false,
+        parent_object_json: Some(format!(r#"{{"id":{priority}}}"#)),
+        parent_object_json_truncated: false,
+        sample_priority: Some(priority),
+        sample_rank: None,
+    }
+}
+
 fn table_count(conn: &Connection, table: &str) -> u64 {
     conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
         row.get::<_, u64>(0)
@@ -417,6 +439,63 @@ fn priority_object_samples_are_pruned_and_ranked_after_flush() {
         .expect("query kept priority sample");
 
     assert_eq!(kept, ("priority-better".to_string(), 1));
+}
+
+#[test]
+fn value_priority_prune_keeps_rows_bounded_across_chunk_flushes() {
+    let dir = unique_temp_dir("value-priority-prune");
+    let out = dir.join("profile.sqlite");
+    let mut config = test_config(&out);
+    config.sampling.value_priority_limit_per_field_profile = 2;
+    let mut writer = ProfileWriter::open(&out, &config).expect("open writer");
+
+    writer
+        .flush_chunk(ProfileChunk {
+            shapes: vec![shape_row()],
+            shape_fields: vec![shape_field_row()],
+            value_samples: vec![
+                priority_value_sample_row("priority-30", "field-1", 30, 0),
+                priority_value_sample_row("priority-20", "field-1", 20, 1),
+            ],
+            ..ProfileChunk::default()
+        })
+        .expect("first flush");
+
+    writer
+        .flush_chunk(ProfileChunk {
+            value_samples: vec![
+                priority_value_sample_row("priority-10", "field-1", 10, 2),
+                priority_value_sample_row("priority-40", "field-1", 40, 3),
+            ],
+            ..ProfileChunk::default()
+        })
+        .expect("second flush");
+
+    let count: u64 = writer
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM prof_field_value_sample WHERE sample_kind = 'priority_sample'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query priority sample count");
+    assert_eq!(count, 2);
+
+    let kept: Vec<String> = writer
+        .connection()
+        .prepare(
+            "SELECT value_sample_id FROM prof_field_value_sample WHERE sample_kind = 'priority_sample' ORDER BY sample_rank",
+        )
+        .expect("prepare kept query")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query kept rows")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect kept rows");
+
+    assert_eq!(
+        kept,
+        vec!["priority-10".to_string(), "priority-20".to_string()]
+    );
 }
 
 #[test]

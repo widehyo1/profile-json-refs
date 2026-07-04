@@ -5,6 +5,7 @@ pub mod field;
 pub mod refs;
 pub mod scan;
 pub mod shape;
+pub mod sketch;
 pub mod sqlite;
 pub mod util;
 pub mod value;

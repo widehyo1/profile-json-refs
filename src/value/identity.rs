@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ValueKey {
     Null,
     Bool(bool),

@@ -2,6 +2,23 @@
 name = "profile-json-refs"
 version = "0.1.0"
 edition = "2024"
+description = "Profile JSON/JSONL values using refs artifacts produced by dump-json-refs."
+repository = "https://github.com/widehyo1/profile-json-refs"
+readme = "README.md"
+license = "MIT"
+keywords = ["json", "jsonl", "sqlite", "profiling", "reverse-engineering"]
+categories = ["command-line-utilities", "database"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/fixtures/**",
+    "/scripts/*.sh",
+    "/scripts/*.py",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+]
 
 [dependencies]
 anyhow = "1"

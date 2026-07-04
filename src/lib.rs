@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod field;
+pub mod perf;
 pub mod refs;
 pub mod scan;
 pub mod shape;
@@ -16,11 +17,13 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use rusqlite::Connection;
 use serde_json::{Map, Value};
 
 use crate::config::{InputFormat, ProfileConfig};
 use crate::error::Result;
 use crate::field::accumulator::{FieldValueAccumulator, ShapeFieldRow};
+use crate::perf::timer::{PerfBucket, PerfLog};
 use crate::refs::resolver::RefsResolver;
 use crate::scan::path::SourcePath;
 use crate::scan::visitor::ScanVisitor;
@@ -33,6 +36,7 @@ pub struct ProfileReport {
     pub summary: SourceSummary,
     pub elapsed: Duration,
     pub warnings: Vec<ProfileWarning>,
+    pub perf_buckets: Vec<PerfBucket>,
     pub quiet: bool,
 }
 
@@ -96,17 +100,25 @@ pub const W_CANONICAL_PATH_UNAVAILABLE: &str = "W_CANONICAL_PATH_UNAVAILABLE";
 pub fn run(config: ProfileConfig) -> Result<ProfileReport> {
     let start = Instant::now();
     config.validate()?;
+    let mut perf_log = PerfLog::new(config.perf_log);
 
     let resolved_format = resolve_input_format(&config);
     let source_format = resolved_format.as_source_summary_str();
-    let loaded_refs = crate::refs::sqlite::load_refs_index_from_path(&config.refs_sqlite)?;
+    let refs_conn = perf_log.time_result("refs.open", || Connection::open(&config.refs_sqlite))?;
+    let loaded_refs = perf_log.time_result("refs.load_contract", || {
+        crate::refs::sqlite::load_refs_index(&refs_conn)
+    })?;
     let resolver = RefsResolver::new(loaded_refs.index);
-    let writer = ProfileWriter::open(&config.out_sqlite, &config)?;
+    let writer = perf_log.time_result("sqlite.create_schema", || {
+        ProfileWriter::open(&config.out_sqlite, &config)
+    })?;
     let quiet = config.quiet;
     let out_path = config.out_sqlite.clone();
 
-    let mut visitor = ProfileRunVisitor::new(config, resolver, writer, loaded_refs.warnings);
+    let mut visitor =
+        ProfileRunVisitor::new(config, resolver, writer, loaded_refs.warnings, perf_log);
     let file = File::open(&visitor.config.input_file)?;
+    let scan_start = Instant::now();
     match resolved_format {
         ResolvedInputFormat::Json => {
             crate::scan::json::scan_json_file(BufReader::new(file), &mut visitor)?;
@@ -115,6 +127,7 @@ pub fn run(config: ProfileConfig) -> Result<ProfileReport> {
             crate::scan::jsonl::scan_jsonl_file(BufReader::new(file), &mut visitor)?;
         }
     }
+    visitor.record_perf("scan.read_parse_walk", scan_start.elapsed());
 
     visitor.finish(source_format, out_path, quiet, start.elapsed())
 }
@@ -163,6 +176,7 @@ struct ProfileRunVisitor {
     field_values: HashMap<String, FieldValueAccumulator>,
     warnings: Vec<ProfileWarning>,
     warned_canonical_path_unavailable: bool,
+    perf_log: PerfLog,
 }
 
 impl ProfileRunVisitor {
@@ -171,6 +185,7 @@ impl ProfileRunVisitor {
         resolver: RefsResolver,
         writer: ProfileWriter,
         warnings: Vec<ProfileWarning>,
+        perf_log: PerfLog,
     ) -> Self {
         Self {
             config,
@@ -182,7 +197,12 @@ impl ProfileRunVisitor {
             field_values: HashMap::new(),
             warnings,
             warned_canonical_path_unavailable: false,
+            perf_log,
         }
+    }
+
+    fn record_perf(&mut self, name: &'static str, duration: Duration) {
+        self.perf_log.record(name, duration);
     }
 
     fn finish(
@@ -194,10 +214,13 @@ impl ProfileRunVisitor {
     ) -> Result<ProfileReport> {
         self.flush_pending_samples()?;
 
+        let value_start = Instant::now();
         let mut field_outputs: Vec<_> = std::mem::take(&mut self.field_values)
             .into_values()
             .map(|accumulator| accumulator.finish(&self.config))
             .collect();
+        self.perf_log
+            .record("scan.flush_values", value_start.elapsed());
         field_outputs.sort_by(|left, right| {
             left.summary
                 .field_profile_id
@@ -211,16 +234,21 @@ impl ProfileRunVisitor {
             final_chunk.value_samples.extend(output.value_samples);
         }
         self.writer.flush_chunk(final_chunk)?;
-        self.writer.create_indexes()?;
+        self.perf_log.record("sqlite.prune_samples", Duration::ZERO);
+        self.perf_log
+            .time_result("sqlite.indexes", || self.writer.create_indexes())?;
         let summary = self
             .writer
             .write_source_summary(source_format, self.counters)?;
+        self.perf_log.record("total", elapsed);
+        let perf_buckets = self.perf_log.into_buckets();
 
         Ok(ProfileReport {
             out_path,
             summary,
             elapsed,
             warnings: self.warnings,
+            perf_buckets,
             quiet,
         })
     }
@@ -286,16 +314,30 @@ impl ProfileRunVisitor {
     }
 
     fn drain_pending_chunk(&mut self) -> ProfileChunk {
+        let shape_start = Instant::now();
+        let shapes = self.shape_accumulator.drain_shape_rows();
+        self.perf_log
+            .record("scan.flush_shapes", shape_start.elapsed());
+
+        let field_start = Instant::now();
         let mut shape_fields: Vec<_> = self.shape_fields.drain().map(|(_, row)| row).collect();
         shape_fields.sort_by(|left, right| left.field_profile_id.cmp(&right.field_profile_id));
+        self.perf_log
+            .record("scan.flush_fields", field_start.elapsed());
+
+        let sample_start = Instant::now();
+        let object_samples = self.shape_accumulator.drain_object_sample_rows();
+        let value_samples = self.drain_value_sample_rows();
+        self.perf_log
+            .record("scan.flush_samples", sample_start.elapsed());
 
         ProfileChunk {
-            shapes: self.shape_accumulator.drain_shape_rows(),
+            shapes,
             shape_fields,
-            object_samples: self.shape_accumulator.drain_object_sample_rows(),
+            object_samples,
             field_summaries: Vec::new(),
             field_values: Vec::new(),
-            value_samples: self.drain_value_sample_rows(),
+            value_samples,
         }
     }
 

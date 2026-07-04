@@ -1,6 +1,7 @@
 mod common;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -17,6 +18,12 @@ fn script_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("scripts")
         .join(relative)
+}
+
+fn make_executable(path: &Path) {
+    let mut permissions = fs::metadata(path).expect("script metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).expect("mark script executable");
 }
 
 fn create_refs_from_fixture(path: &Path) {
@@ -504,6 +511,124 @@ fn regression_scripts_are_checked_in_and_syntax_valid() {
     assert!(
         output.status.success(),
         "large fixture generator has invalid python syntax: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn rc2_regression_script_exits_zero_after_successful_cleanup() {
+    let dir = unique_temp_dir("rc2-regression-script-cleanup");
+    let dump_bin = dir.join("dump-json-refs-stub");
+    let profile_bin = dir.join("profile-json-refs-stub");
+
+    fs::write(
+        &dump_bin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p refs
+: > refs/schemas.sqlite
+"#,
+    )
+    .expect("write dump stub");
+    make_executable(&dump_bin);
+
+    fs::write(
+        &profile_bin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--help" ]]; then
+  echo "Usage: profile-json-refs <INPUT>"
+  exit 0
+fi
+
+if [[ "${1:-}" == "-" ]]; then
+  echo "stdin is not supported" >&2
+  exit 2
+fi
+
+out=""
+quiet=0
+perf=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strict)
+      echo "--strict is not supported" >&2
+      exit 2
+      ;;
+    --out)
+      out="${2:?--out requires value}"
+      shift 2
+      ;;
+    --quiet)
+      quiet=1
+      shift
+      ;;
+    --perf-log)
+      perf=1
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$out" ]] || { echo "--out is required" >&2; exit 2; }
+
+sqlite3 "$out" <<'SQL'
+CREATE TABLE prof_source_summary(total_document_count INTEGER NOT NULL);
+CREATE TABLE prof_shape(shape_id TEXT NOT NULL);
+CREATE TABLE prof_shape_field(field_profile_id TEXT NOT NULL);
+CREATE TABLE prof_field_summary(
+  field_profile_id TEXT NOT NULL,
+  distinct_count_method TEXT NOT NULL,
+  empty_string_count INTEGER NOT NULL
+);
+CREATE TABLE prof_field_value(field_profile_id TEXT NOT NULL, value_source TEXT NOT NULL);
+CREATE TABLE prof_field_value_sample(field_profile_id TEXT NOT NULL, sample_kind TEXT NOT NULL);
+CREATE TABLE prof_object_sample(sample_kind TEXT NOT NULL, sample_scope TEXT NOT NULL, sample_key TEXT NOT NULL);
+INSERT INTO prof_source_summary(total_document_count) VALUES (83);
+INSERT INTO prof_shape(shape_id) VALUES ('shape:1');
+INSERT INTO prof_shape_field(field_profile_id) VALUES ('field:1');
+INSERT INTO prof_field_summary(field_profile_id, distinct_count_method, empty_string_count)
+VALUES ('field:1', 'approximate', 1);
+INSERT INTO prof_field_value(field_profile_id, value_source) VALUES ('field:1', 'exact_full');
+SQL
+
+if [[ "$quiet" -eq 0 ]]; then
+  {
+    echo "profile-json-refs: wrote $out"
+    echo "documents: 83"
+    echo "objects: 83"
+    echo "shapes: 1"
+    echo "field_profiles: 1"
+    echo "elapsed: 0.000s"
+  }
+fi
+
+if [[ "$perf" -eq 1 ]]; then
+  echo "[perf] total 0ms" >&2
+fi
+"#,
+    )
+    .expect("write profile stub");
+    make_executable(&profile_bin);
+
+    let output = Command::new("bash")
+        .arg(script_path(
+            "regression_profile_json_refs_v0_1_rc2_patch.sh",
+        ))
+        .env("PROFILE_JSON_REFS_BIN", &profile_bin)
+        .env("DUMP_JSON_REFS_BIN", &dump_bin)
+        .env("TMPDIR", &dir)
+        .output()
+        .expect("run rc2 regression script");
+
+    assert!(
+        output.status.success(),
+        "rc2 regression script should exit zero after successful checks\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 }

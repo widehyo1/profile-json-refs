@@ -898,7 +898,7 @@ rc2 diagnostic remains green
 **Files:**
 - No new files expected unless a test fixture is needed.
 
-- [ ] **Step 1: Format**
+- [x] **Step 1: Format**
 
 Run:
 
@@ -912,7 +912,7 @@ Expected:
 exit 0
 ```
 
-- [ ] **Step 2: Full cargo test**
+- [x] **Step 2: Full cargo test**
 
 Run:
 
@@ -926,7 +926,7 @@ Expected:
 all tests pass, including rc2_diagnose_script_enforces_performance_safe_sample_contract
 ```
 
-- [ ] **Step 3: Script syntax**
+- [x] **Step 3: Script syntax**
 
 Run:
 
@@ -941,7 +941,7 @@ Expected:
 exit 0 for both commands
 ```
 
-- [ ] **Step 4: External regression**
+- [x] **Step 4: External regression**
 
 Build release binary:
 
@@ -963,7 +963,7 @@ Expected:
 PASS v0.1.0-rc.2 performance regression
 ```
 
-- [ ] **Step 5: Documentation consistency check**
+- [x] **Step 5: Documentation consistency check**
 
 Run:
 

@@ -1,11 +1,13 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod field;
 pub mod refs;
 pub mod scan;
 pub mod shape;
 pub mod sqlite;
 pub mod util;
+pub mod value;
 
 use std::path::PathBuf;
 use std::time::Duration;

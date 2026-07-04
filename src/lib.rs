@@ -3,7 +3,9 @@ pub mod config;
 pub mod error;
 pub mod refs;
 pub mod scan;
+pub mod shape;
 pub mod sqlite;
+pub mod util;
 
 use std::path::PathBuf;
 use std::time::Duration;

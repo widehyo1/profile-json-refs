@@ -124,46 +124,46 @@ CREATE TABLE prof_field_value_sample (
 "#;
 
 pub const PROFILE_INDEX_SQL: &str = r#"
-CREATE UNIQUE INDEX idx_prof_object_sample_once
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prof_object_sample_once
 ON prof_object_sample(sample_scope, sample_key, sample_kind)
 WHERE sample_kind IN ('first_seen', 'first_non_empty');
 
-CREATE INDEX idx_prof_object_sample_key
+CREATE INDEX IF NOT EXISTS idx_prof_object_sample_key
 ON prof_object_sample(sample_scope, sample_key, sample_rank);
 
-CREATE INDEX idx_prof_object_sample_shape
+CREATE INDEX IF NOT EXISTS idx_prof_object_sample_shape
 ON prof_object_sample(shape_id, sample_rank);
 
-CREATE INDEX idx_prof_shape_canonical
+CREATE INDEX IF NOT EXISTS idx_prof_shape_canonical
 ON prof_shape(canonical_path, object_count DESC);
 
-CREATE INDEX idx_prof_shape_site
+CREATE INDEX IF NOT EXISTS idx_prof_shape_site
 ON prof_shape(site_path, object_count DESC);
 
-CREATE INDEX idx_prof_shape_schema
+CREATE INDEX IF NOT EXISTS idx_prof_shape_schema
 ON prof_shape(schema_path, object_count DESC);
 
-CREATE INDEX idx_prof_shape_field_set
+CREATE INDEX IF NOT EXISTS idx_prof_shape_field_set
 ON prof_shape(field_set_hash);
 
-CREATE INDEX idx_prof_shape_type_set
+CREATE INDEX IF NOT EXISTS idx_prof_shape_type_set
 ON prof_shape(type_set_hash);
 
-CREATE UNIQUE INDEX idx_prof_shape_field_unique
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prof_shape_field_unique
 ON prof_shape_field(shape_id, field_name, observed_type);
 
-CREATE INDEX idx_prof_shape_field_name
+CREATE INDEX IF NOT EXISTS idx_prof_shape_field_name
 ON prof_shape_field(field_name);
 
-CREATE INDEX idx_prof_field_value_count
+CREATE INDEX IF NOT EXISTS idx_prof_field_value_count
 ON prof_field_value(field_profile_id, count DESC);
 
-CREATE INDEX idx_prof_field_value_hash
+CREATE INDEX IF NOT EXISTS idx_prof_field_value_hash
 ON prof_field_value(value_hash);
 
-CREATE INDEX idx_prof_field_value_sample_field
+CREATE INDEX IF NOT EXISTS idx_prof_field_value_sample_field
 ON prof_field_value_sample(field_profile_id, sample_rank);
 
-CREATE INDEX idx_prof_field_value_sample_hash
+CREATE INDEX IF NOT EXISTS idx_prof_field_value_sample_hash
 ON prof_field_value_sample(value_hash);
 "#;

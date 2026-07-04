@@ -6,6 +6,7 @@ use crate::config::SamplingConfig;
 use crate::error::Result;
 use crate::refs::resolver::ResolvedObjectContext;
 use crate::scan::path::SourcePath;
+use crate::shape::id::ShapeFacts;
 use crate::shape::sample::{ObjectSampleAccumulator, ObjectSampleRow};
 
 #[derive(Debug, Default)]
@@ -38,6 +39,18 @@ impl ShapeAccumulator {
         object: &Map<String, Value>,
         config: &SamplingConfig,
     ) -> Result<()> {
+        let _ = self.observe_object_with_facts(document_index, path, context, object, config)?;
+        Ok(())
+    }
+
+    pub fn observe_object_with_facts(
+        &mut self,
+        document_index: u64,
+        path: &SourcePath,
+        context: &ResolvedObjectContext,
+        object: &Map<String, Value>,
+        config: &SamplingConfig,
+    ) -> Result<ShapeFacts> {
         let source_path = path.as_str();
         let facts = crate::shape::id::compute_shape_facts(
             &context.canonical_path,
@@ -71,7 +84,8 @@ impl ShapeAccumulator {
             &facts,
             object,
             config,
-        )
+        )?;
+        Ok(facts)
     }
 
     pub fn shape_rows(&self) -> Vec<ShapeRow> {
@@ -80,7 +94,21 @@ impl ShapeAccumulator {
         rows
     }
 
+    pub fn drain_shape_rows(&mut self) -> Vec<ShapeRow> {
+        let mut rows: Vec<_> = self.shapes.drain().map(|(_, row)| row).collect();
+        rows.sort_by(|left, right| left.shape_id.cmp(&right.shape_id));
+        rows
+    }
+
     pub fn drain_object_sample_rows(&mut self) -> Vec<ObjectSampleRow> {
         self.object_samples.drain_rows()
+    }
+
+    pub fn shape_row_count(&self) -> usize {
+        self.shapes.len()
+    }
+
+    pub fn pending_object_sample_count(&self) -> usize {
+        self.object_samples.pending_row_count()
     }
 }

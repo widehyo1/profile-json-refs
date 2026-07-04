@@ -177,11 +177,33 @@ impl ValueSampleAccumulator {
         });
         rows
     }
+
+    pub fn drain_rows(&mut self) -> Vec<ValueSampleRow> {
+        let rows = self.rows();
+        self.rows.clear();
+        self.priority.clear();
+        self.heavy_hitter_context.clear();
+        rows
+    }
+
+    pub fn pending_row_count(&self) -> usize {
+        self.rows.len()
+            + self.priority.len()
+            + self
+                .heavy_hitter_context
+                .values()
+                .map(Vec::len)
+                .sum::<usize>()
+    }
 }
 
 pub fn sample_priority(field_profile_id: &str, document_index: u64, source_path: &str) -> u64 {
     let input = format!("{field_profile_id}\x1f{document_index}\x1f{source_path}");
-    crate::util::hash::stable_u64(input.as_bytes())
+    sqlite_priority(crate::util::hash::stable_u64(input.as_bytes()))
+}
+
+fn sqlite_priority(value: u64) -> u64 {
+    value & i64::MAX as u64
 }
 
 struct ValueSampleObservation<'a> {

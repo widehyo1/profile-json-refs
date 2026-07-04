@@ -68,6 +68,14 @@ where
             })
             .collect()
     }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+    }
 }
 
 fn compare_priority<T>(left: &PriorityItem<T>, right: &PriorityItem<T>) -> Ordering {

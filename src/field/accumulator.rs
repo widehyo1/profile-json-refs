@@ -168,6 +168,14 @@ impl FieldValueAccumulator {
         self.value_samples.rows()
     }
 
+    pub fn drain_value_sample_rows(&mut self) -> Vec<ValueSampleRow> {
+        self.value_samples.drain_rows()
+    }
+
+    pub fn pending_value_sample_count(&self) -> usize {
+        self.value_samples.pending_row_count()
+    }
+
     pub fn finish(mut self, config: &ProfileConfig) -> FieldProfileOutput {
         let mut field_values = if self.exact.is_enabled() {
             self.summary.distinct_count_method = DistinctCountMethod::Exact;

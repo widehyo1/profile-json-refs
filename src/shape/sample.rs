@@ -141,6 +141,15 @@ impl ObjectSampleAccumulator {
         rows
     }
 
+    pub fn pending_row_count(&self) -> usize {
+        self.pending_rows.len()
+            + self
+                .priority
+                .values()
+                .map(|top_k| top_k.candidates.len())
+                .sum::<usize>()
+    }
+
     fn enqueue_once(
         &mut self,
         scope: SampleScope,
@@ -245,7 +254,11 @@ pub fn sample_priority(
         "{}\x1f{sample_key}\x1f{document_index}\x1f{source_path}",
         sample_scope.as_sql_str()
     );
-    crate::util::hash::stable_u64(input.as_bytes())
+    sqlite_priority(crate::util::hash::stable_u64(input.as_bytes()))
+}
+
+fn sqlite_priority(value: u64) -> u64 {
+    value & i64::MAX as u64
 }
 
 fn make_object_sample_row(

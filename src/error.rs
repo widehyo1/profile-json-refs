@@ -35,6 +35,9 @@ pub enum ProfileError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    #[error("json parse error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

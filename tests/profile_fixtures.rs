@@ -439,16 +439,50 @@ fn sample_oom_guard_fixture_bounds_priority_samples_and_preserves_first_seen() {
 }
 
 #[test]
+fn rc2_diagnose_script_enforces_performance_safe_sample_contract() {
+    let (db, _, _) = run_fixture(
+        "fixture-rc2-diagnose-defaults",
+        "jsonl/sample_guard.jsonl",
+        &["--jsonl"],
+    );
+
+    let output = Command::new("bash")
+        .arg(script_path("diagnose_profile_sqlite.sh"))
+        .arg("--fail-on-risk")
+        .arg("--hh-context-limit")
+        .arg("0")
+        .arg("--value-sample-limit")
+        .arg("4")
+        .arg(&db)
+        .output()
+        .expect("run profile sqlite diagnosis");
+
+    assert!(
+        output.status.success(),
+        "diagnose_profile_sqlite.sh reported rc.2 regression risk\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn regression_scripts_are_checked_in_and_syntax_valid() {
     for script in [
         "assert_profile_sqlite.sh",
+        "diagnose_profile_sqlite.sh",
         "make_fixture_refs.sh",
         "make_large_jsonl_fixture.py",
+        "regression_profile_json_refs_v0_1_rc2_patch.sh",
     ] {
         assert!(script_path(script).is_file(), "missing script {script}");
     }
 
-    for script in ["assert_profile_sqlite.sh", "make_fixture_refs.sh"] {
+    for script in [
+        "assert_profile_sqlite.sh",
+        "diagnose_profile_sqlite.sh",
+        "make_fixture_refs.sh",
+        "regression_profile_json_refs_v0_1_rc2_patch.sh",
+    ] {
         let output = Command::new("bash")
             .arg("-n")
             .arg(script_path(script))

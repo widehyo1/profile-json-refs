@@ -1,6 +1,8 @@
 mod common;
 
-use common::{basic_fixture, run_profile, stderr, stdout};
+use std::fs;
+
+use common::{basic_fixture, create_refs_db, run_profile, stderr, stdout, unique_temp_dir};
 
 const REQUIRED_BUCKETS: &[&str] = &[
     "total",
@@ -211,6 +213,54 @@ fn perf_log_emits_scan_and_sqlite_detail_events() {
 }
 
 #[test]
+fn value_sample_limit_flush_reports_o1_pending_sample_counter() {
+    let dir = unique_temp_dir("perf-value-sample-limit");
+    let input = dir.join("input.jsonl");
+    let refs = dir.join("refs.sqlite");
+    let out = dir.join("profile.sqlite");
+    let config = dir.join("profile.yaml");
+
+    fs::write(
+        &input,
+        r#"{"id":1,"name":"Ada"}
+{"id":2,"name":"Grace"}
+"#,
+    )
+    .expect("write input");
+    create_refs_db(&refs, false);
+    fs::write(
+        &config,
+        r#"
+flush:
+  chunk_object_sample_rows: 1000
+  chunk_value_sample_rows: 2
+  chunk_shape_rows: 1000
+  chunk_field_rows: 1000
+"#,
+    )
+    .expect("write config");
+
+    let output = run_profile(&[
+        input.display().to_string(),
+        "--jsonl".to_string(),
+        "--config".to_string(),
+        config.display().to_string(),
+        "--refs".to_string(),
+        refs.display().to_string(),
+        "--out".to_string(),
+        out.display().to_string(),
+        "--perf-log".to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stdout(&output).contains("documents: 2"));
+    let stderr = stderr(&output);
+    assert_perf_contains(&stderr, "phase=flush.trigger");
+    assert_perf_contains(&stderr, "reason=value_sample_limit");
+    assert_perf_contains(&stderr, "pending_value_samples=");
+}
+
+#[test]
 fn field_value_hot_path_avoids_heavy_hitter_key_materialization() {
     let source =
         std::fs::read_to_string("src/field/accumulator.rs").expect("read field accumulator");
@@ -268,6 +318,20 @@ fn perf_hot_counters_do_not_add_aggregate_work_to_visit_object() {
     assert!(
         !flush_after_object.contains("pending_object_sample_count()"),
         "object hot-path flush must not scan object sample maps"
+    );
+
+    let flush_if_needed = source
+        .split("fn flush_if_needed(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn flush_after_object_if_needed(").next())
+        .expect("extract document flush implementation");
+    assert!(
+        !flush_if_needed.contains("pending_value_sample_count_slow()"),
+        "document flush checks must use the maintained pending value sample counter"
+    );
+    assert!(
+        flush_if_needed.contains("pending_value_sample_rows"),
+        "document flush checks should compare the O(1) pending value sample counter"
     );
 
     let visit_array = source

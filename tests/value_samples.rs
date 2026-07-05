@@ -4,7 +4,7 @@ use profile_json_refs::config::{
     FlushConfig, InputFormat, ProfileConfig, SamplingConfig, ValueProfileConfig,
 };
 use profile_json_refs::field::accumulator::FieldValueAccumulator;
-use profile_json_refs::value::sample::ValueSampleKind;
+use profile_json_refs::value::sample::{ValueSampleAccumulator, ValueSampleKind};
 use serde_json::json;
 
 fn profile_config() -> ProfileConfig {
@@ -101,6 +101,33 @@ fn value_priority_samples_are_bounded() {
 }
 
 #[test]
+fn field_value_observation_stats_match_pending_sample_rows_and_drain() {
+    let config = profile_config();
+    let mut accumulator = FieldValueAccumulator::new("field-a".to_string(), &config);
+    let parent = json!({"field": "alpha"});
+    let value = json!("alpha");
+
+    let stats = accumulator.observe(
+        0,
+        "$.field",
+        &value,
+        parent.as_object().expect("parent fixture is an object"),
+        &config,
+    );
+
+    assert_eq!(
+        stats.pending_value_sample_delta.added,
+        accumulator.pending_value_sample_count()
+    );
+    assert_eq!(stats.pending_value_sample_delta.removed, 0);
+    assert_eq!(
+        accumulator.drain_value_sample_rows().len(),
+        stats.pending_value_sample_delta.added
+    );
+    assert_eq!(accumulator.pending_value_sample_count(), 0);
+}
+
+#[test]
 fn heavy_hitter_context_samples_are_not_emitted_in_rc2() {
     let mut config = profile_config();
     config.sampling.heavy_hitter_context_sample_limit = 4;
@@ -123,4 +150,56 @@ fn heavy_hitter_context_samples_are_not_emitted_in_rc2() {
         .filter(|row| row.sample_kind == ValueSampleKind::HeavyHitterContext)
         .count();
     assert_eq!(context_count, 0);
+}
+
+#[test]
+fn value_sample_observation_reports_pending_row_delta() {
+    let config = profile_config();
+    let mut accumulator = ValueSampleAccumulator::new(1, 0);
+    let parent = json!({"field": "alpha"});
+    let parent = parent.as_object().expect("parent fixture is an object");
+    let value = json!("alpha");
+
+    let delta = accumulator.observe(0, "$.field", "field-a", &value, parent, &config);
+
+    assert_eq!(delta.added, accumulator.pending_row_count());
+    assert_eq!(delta.removed, 0);
+    assert!(delta.net() > 0);
+}
+
+#[test]
+fn value_sample_priority_replacement_does_not_grow_pending_count() {
+    let config = profile_config();
+    let mut accumulator = ValueSampleAccumulator::new(1, 0);
+    let mut previous_priority_sample_id = None;
+
+    for index in 0..10_000 {
+        let value = json!(format!("value-{index}"));
+        let parent = json!({"field": value.clone()});
+        let before_count = accumulator.pending_row_count();
+        let delta = accumulator.observe(
+            index,
+            &format!("$.field{index}"),
+            "field-a",
+            &value,
+            parent.as_object().expect("parent fixture is an object"),
+            &config,
+        );
+        let after_count = accumulator.pending_row_count();
+        let priority_sample_id = accumulator
+            .rows()
+            .into_iter()
+            .find(|row| row.sample_kind == ValueSampleKind::PrioritySample)
+            .map(|row| row.value_sample_id);
+
+        if index > 0 && priority_sample_id != previous_priority_sample_id {
+            assert_eq!(after_count, before_count);
+            assert_eq!(delta.net(), 0);
+            return;
+        }
+
+        previous_priority_sample_id = priority_sample_id;
+    }
+
+    panic!("expected deterministic priority replacement within fixture search");
 }

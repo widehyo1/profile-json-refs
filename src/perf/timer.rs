@@ -80,6 +80,16 @@ impl PerfLog {
         self.write_line(&line);
     }
 
+    pub fn elapsed_event(&mut self, phase: &str, started: Instant, detail: impl std::fmt::Display) {
+        if !self.enabled {
+            return;
+        }
+        self.event(&format!(
+            "phase={phase} elapsed_ms={} {detail}",
+            started.elapsed().as_millis()
+        ));
+    }
+
     pub fn into_buckets(self) -> Vec<PerfBucket> {
         self.buckets
     }

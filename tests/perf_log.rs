@@ -17,6 +17,13 @@ const REQUIRED_BUCKETS: &[&str] = &[
     "stdout.summary",
 ];
 
+fn assert_perf_contains(stderr: &str, needle: &str) {
+    assert!(
+        stderr.contains(needle),
+        "missing perf diagnostic {needle:?} in stderr:\n{stderr}"
+    );
+}
+
 #[test]
 fn perf_log_emits_required_buckets_to_stderr() {
     let fixture = basic_fixture("perf-log", r#"{"id":1,"name":"Ada"}"#, false);
@@ -109,4 +116,71 @@ fn perf_log_dbstat_is_opt_in() {
     ]);
     assert!(with.status.success(), "stderr: {}", stderr(&with));
     assert!(stderr(&with).contains("phase=sqlite.dbstat"));
+}
+
+#[test]
+fn perf_log_emits_scan_and_sqlite_detail_events() {
+    let fixture = basic_fixture(
+        "perf-log-density",
+        r#"{"id":1,"name":"Ada","tags":["engineer"]}
+{"id":2,"name":"Grace","tags":["compiler","navy"]}"#,
+        true,
+    );
+
+    let output = run_profile(&[
+        fixture.input.display().to_string(),
+        "--jsonl".to_string(),
+        "--refs".to_string(),
+        fixture.refs.display().to_string(),
+        "--out".to_string(),
+        fixture.out.display().to_string(),
+        "--perf-log".to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let stderr = stderr(&output);
+
+    assert_perf_contains(&stderr, "phase=scan.progress");
+    assert_perf_contains(&stderr, "phase=scan.accumulators");
+    assert_perf_contains(&stderr, "pending_shapes=");
+    assert_perf_contains(&stderr, "pending_shape_fields=");
+    assert_perf_contains(&stderr, "pending_value_samples=");
+
+    assert_perf_contains(&stderr, "phase=flush.chunk");
+    assert_perf_contains(&stderr, "field_summaries=");
+    assert_perf_contains(&stderr, "field_values=");
+
+    assert_perf_contains(&stderr, "phase=sqlite.flush.shapes");
+    assert_perf_contains(&stderr, "phase=sqlite.flush.shape_fields");
+    assert_perf_contains(&stderr, "phase=sqlite.flush.object_samples");
+    assert_perf_contains(&stderr, "phase=sqlite.flush.field_summaries");
+    assert_perf_contains(&stderr, "phase=sqlite.flush.field_values");
+    assert_perf_contains(&stderr, "phase=sqlite.flush.value_samples");
+    assert_perf_contains(&stderr, "phase=sqlite.flush.commit");
+    assert_perf_contains(&stderr, "elapsed_ms=");
+    assert_perf_contains(&stderr, "rows=");
+}
+
+#[test]
+fn perf_log_emits_final_sqlite_summary_and_size_events() {
+    let fixture = basic_fixture("perf-log-final-density", r#"{"id":1,"name":"Ada"}"#, false);
+
+    let output = run_profile(&[
+        fixture.input.display().to_string(),
+        "--refs".to_string(),
+        fixture.refs.display().to_string(),
+        "--out".to_string(),
+        fixture.out.display().to_string(),
+        "--perf-log".to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let stderr = stderr(&output);
+
+    assert_perf_contains(&stderr, "phase=sqlite.prune.object_priority");
+    assert_perf_contains(&stderr, "phase=sqlite.prune.value_priority");
+    assert_perf_contains(&stderr, "phase=sqlite.summary.counts");
+    assert_perf_contains(&stderr, "phase=sqlite.summary.write");
+    assert_perf_contains(&stderr, "phase=sqlite.size");
+    assert_perf_contains(&stderr, "profile_sqlite_bytes=");
 }

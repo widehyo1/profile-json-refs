@@ -655,7 +655,6 @@ impl ProfileRunVisitor {
         shape_id: &str,
         object: &Map<String, Value>,
     ) {
-        let parent_object = Value::Object(object.clone());
         let perf_enabled = self.perf_enabled();
         let sampled_active = perf_enabled && self.scan_perf.sampled_walk.active;
 
@@ -710,7 +709,7 @@ impl ProfileRunVisitor {
                     document_index,
                     &source_path,
                     value,
-                    &parent_object,
+                    object,
                     &self.config,
                     &mut timing,
                 );
@@ -720,13 +719,7 @@ impl ProfileRunVisitor {
                 self.scan_perf.sampled_walk.field_update_elapsed += timing.field_update_elapsed;
                 self.scan_perf.sampled_walk.sample_update_elapsed += timing.sample_update_elapsed;
             } else {
-                accumulator.observe(
-                    document_index,
-                    &source_path,
-                    value,
-                    &parent_object,
-                    &self.config,
-                );
+                accumulator.observe(document_index, &source_path, value, object, &self.config);
             }
         }
     }

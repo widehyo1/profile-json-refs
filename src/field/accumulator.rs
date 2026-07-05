@@ -6,12 +6,10 @@ use serde_json::{Map, Value};
 use crate::config::ProfileConfig;
 use crate::field::summary::{DistinctAlgorithm, DistinctCountMethod, FieldSummary, update_summary};
 use crate::sketch::hll::HyperLogLog;
-use crate::sketch::space_saving::SpaceSaving;
+use crate::sketch::space_saving::{SpaceSaving, SpaceSavingUpdate};
 use crate::util::json_type::JsonType;
 use crate::value::exact_counter::{CountMethod, ExactCounter, FieldValueRow, ValueSource};
-use crate::value::identity::{
-    ValueHashTiming, ValueKey, value_hash_from_key, value_key, value_key_with_canonical_timing,
-};
+use crate::value::identity::{ObservedValue, ValueHashTiming, ValueKey, value_hash_from_key};
 use crate::value::sample::{ValueSampleAccumulator, ValueSampleRow};
 
 #[derive(Debug, Default)]
@@ -138,7 +136,7 @@ impl FieldValueAccumulator {
         document_index: u64,
         source_path: &str,
         value: &Value,
-        parent_object: &Value,
+        parent_object: &Map<String, Value>,
         config: &ProfileConfig,
     ) {
         self.observe_inner(
@@ -156,7 +154,7 @@ impl FieldValueAccumulator {
         document_index: u64,
         source_path: &str,
         value: &Value,
-        parent_object: &Value,
+        parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         timing: &mut FieldValueObserveTiming,
     ) {
@@ -175,7 +173,7 @@ impl FieldValueAccumulator {
         document_index: u64,
         source_path: &str,
         value: &Value,
-        parent_object: &Value,
+        parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         mut timing: Option<&mut FieldValueObserveTiming>,
     ) {
@@ -186,28 +184,32 @@ impl FieldValueAccumulator {
         }
 
         let started = timing.as_ref().map(|_| Instant::now());
-        let key = if let Some(timing) = timing.as_deref_mut() {
-            value_key_with_canonical_timing(value, &mut timing.value_canonicalize_elapsed)
+        let observed = if let Some(timing) = timing.as_deref_mut() {
+            ObservedValue::from_value_with_canonical_timing(
+                value,
+                &mut timing.value_canonicalize_elapsed,
+            )
         } else {
-            value_key(value)
+            ObservedValue::from_value(value)
         };
-        let hash64 = crate::util::hash::stable_u64(format!("{key:?}").as_bytes());
         if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
             timing.value_hash_elapsed += started.elapsed();
         }
 
         let started = timing.as_ref().map(|_| Instant::now());
-        self.hll.insert_hash(hash64);
-        self.heavy_hitters.observe(key.clone());
-        self.exact.observe(value);
-
-        if self.heavy_hitters.contains_key(&key) {
-            self.heavy_hitter_values.insert(key.clone(), value.clone());
+        self.hll.insert_hash(observed.stable_hash64);
+        match self.heavy_hitters.observe_update(observed.key.clone()) {
+            SpaceSavingUpdate::Existing | SpaceSavingUpdate::Inserted => {}
+            SpaceSavingUpdate::Replaced { evicted } => {
+                self.heavy_hitter_values.remove(&evicted);
+            }
         }
+        self.exact.observe_keyed(&observed.key, value);
 
-        let active_keys = self.heavy_hitters.keys();
-        self.heavy_hitter_values
-            .retain(|key, _| active_keys.contains(key));
+        if self.heavy_hitters.contains_key(&observed.key) {
+            self.heavy_hitter_values
+                .insert(observed.key.clone(), value.clone());
+        }
         if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
             timing.field_update_elapsed += started.elapsed();
         }
@@ -215,10 +217,11 @@ impl FieldValueAccumulator {
         let started = timing.as_ref().map(|_| Instant::now());
         if let Some(timing) = timing.as_deref_mut() {
             let mut hash_timing = ValueHashTiming::default();
-            self.value_samples.observe_with_timing(
+            self.value_samples.observe_keyed_with_timing(
                 document_index,
                 source_path,
                 &self.field_profile_id,
+                &observed.key,
                 value,
                 parent_object,
                 config,
@@ -227,10 +230,11 @@ impl FieldValueAccumulator {
             timing.value_hash_elapsed += hash_timing.value_hash_elapsed;
             timing.value_canonicalize_elapsed += hash_timing.value_canonicalize_elapsed;
         } else {
-            self.value_samples.observe(
+            self.value_samples.observe_keyed(
                 document_index,
                 source_path,
                 &self.field_profile_id,
+                &observed.key,
                 value,
                 parent_object,
                 config,

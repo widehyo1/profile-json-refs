@@ -91,7 +91,15 @@ impl ExactCounter {
         }
 
         let key = value_key(value);
-        if let Some(entry) = self.counts.get_mut(&key) {
+        self.observe_keyed(&key, value);
+    }
+
+    pub fn observe_keyed(&mut self, key: &ValueKey, value: &Value) {
+        if !self.enabled {
+            return;
+        }
+
+        if let Some(entry) = self.counts.get_mut(key) {
             entry.count += 1;
             return;
         }
@@ -99,10 +107,10 @@ impl ExactCounter {
         let approx_bytes = approximate_value_bytes(value);
         self.used_bytes += approx_bytes;
         self.counts.insert(
-            key,
+            key.clone(),
             ExactValueState {
                 count: 1,
-                value_type: JsonType::from_value(value),
+                value_type: key.json_type(),
                 stored_value: Some(value.clone()),
                 approx_bytes,
             },

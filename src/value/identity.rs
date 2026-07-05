@@ -31,6 +31,81 @@ impl ValueKey {
             ValueKey::ArrayHash(_) => crate::util::json_type::JsonType::Array,
         }
     }
+
+    pub fn stable_hash64(&self) -> u64 {
+        let mut hasher = crate::util::hash::StableHasher::new();
+        match self {
+            ValueKey::Null => hasher.update(b"Null"),
+            ValueKey::Bool(value) => {
+                hasher.update(b"Bool(");
+                hasher.update(if *value { b"true" } else { b"false" });
+                hasher.update(b")");
+            }
+            ValueKey::Integer(value) => hash_debug_string_variant(&mut hasher, b"Integer", value),
+            ValueKey::Number(value) => hash_debug_string_variant(&mut hasher, b"Number", value),
+            ValueKey::String(value) => hash_debug_string_variant(&mut hasher, b"String", value),
+            ValueKey::ObjectHash(value) => {
+                hash_debug_string_variant(&mut hasher, b"ObjectHash", value);
+            }
+            ValueKey::ArrayHash(value) => {
+                hash_debug_string_variant(&mut hasher, b"ArrayHash", value);
+            }
+        }
+        hasher.finish()
+    }
+}
+
+fn hash_debug_string_variant(
+    hasher: &mut crate::util::hash::StableHasher,
+    variant: &[u8],
+    value: &str,
+) {
+    hasher.update(variant);
+    hasher.update(b"(\"");
+    for character in value.chars() {
+        if character == '\'' {
+            hasher.update(b"'");
+        } else {
+            for escaped in character.escape_debug() {
+                let mut buffer = [0; 4];
+                hasher.update(escaped.encode_utf8(&mut buffer).as_bytes());
+            }
+        }
+    }
+    hasher.update(b"\")");
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedValue {
+    pub key: ValueKey,
+    pub stable_hash64: u64,
+    pub value_type: crate::util::json_type::JsonType,
+}
+
+impl ObservedValue {
+    pub fn from_value(value: &Value) -> Self {
+        Self::from_key(value_key(value))
+    }
+
+    pub fn from_value_with_canonical_timing(
+        value: &Value,
+        value_canonicalize_elapsed: &mut Duration,
+    ) -> Self {
+        Self::from_key(value_key_with_canonical_timing(
+            value,
+            value_canonicalize_elapsed,
+        ))
+    }
+
+    fn from_key(key: ValueKey) -> Self {
+        let stable_hash64 = key.stable_hash64();
+        let value_type = key.json_type();
+        Self {
+            key,
+            stable_hash64,
+            value_type,
+        }
+    }
 }
 
 pub fn value_key(value: &Value) -> ValueKey {

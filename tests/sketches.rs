@@ -6,7 +6,7 @@ use profile_json_refs::config::{
 use profile_json_refs::field::accumulator::FieldValueAccumulator;
 use profile_json_refs::field::summary::{DistinctAlgorithm, DistinctCountMethod};
 use profile_json_refs::sketch::hll::HyperLogLog;
-use profile_json_refs::sketch::space_saving::SpaceSaving;
+use profile_json_refs::sketch::space_saving::{SpaceSaving, SpaceSavingUpdate};
 use profile_json_refs::util::hash::stable_u64;
 use profile_json_refs::value::exact_counter::{CountMethod, ValueSource};
 use serde_json::json;
@@ -61,6 +61,42 @@ fn space_saving_keeps_bounded_heavy_hitter_candidates() {
 }
 
 #[test]
+fn space_saving_reports_update_semantics_and_evicted_key() {
+    let mut sketch = SpaceSaving::new(2);
+
+    assert_eq!(
+        sketch.observe_update("a".to_string()),
+        SpaceSavingUpdate::Inserted
+    );
+    assert_eq!(
+        sketch.observe_update("a".to_string()),
+        SpaceSavingUpdate::Existing
+    );
+    assert_eq!(
+        sketch.observe_update("b".to_string()),
+        SpaceSavingUpdate::Inserted
+    );
+    assert_eq!(
+        sketch.observe_update("c".to_string()),
+        SpaceSavingUpdate::Replaced {
+            evicted: "b".to_string()
+        }
+    );
+
+    assert!(sketch.contains_key(&"a".to_string()));
+    assert!(sketch.contains_key(&"c".to_string()));
+    assert!(!sketch.contains_key(&"b".to_string()));
+
+    let top = sketch.top();
+    let replaced = top
+        .iter()
+        .find(|(key, _)| key == "c")
+        .expect("replacement key is tracked");
+    assert_eq!(replaced.1.count, 2);
+    assert_eq!(replaced.1.error, 1);
+}
+
+#[test]
 fn priority_sampler_reports_admission_before_materialization() {
     let mut sampler = profile_json_refs::sketch::priority::PrioritySampler::new(2);
 
@@ -76,6 +112,7 @@ fn priority_sampler_reports_admission_before_materialization() {
 fn approximate_profile_uses_hll_and_bounded_heavy_hitter_rows() {
     let config = profile_config();
     let parent = json!({"field": "value"});
+    let parent_object = parent.as_object().expect("parent fixture is an object");
     let mut accumulator = FieldValueAccumulator::new("field-a".to_string(), &config);
 
     for index in 0..20 {
@@ -83,7 +120,7 @@ fn approximate_profile_uses_hll_and_bounded_heavy_hitter_rows() {
             index,
             "$.field",
             &json!(format!("value-{index}")),
-            &parent,
+            parent_object,
             &config,
         );
     }
@@ -116,4 +153,37 @@ fn approximate_profile_uses_hll_and_bounded_heavy_hitter_rows() {
             .iter()
             .all(|row| !row.is_complete_distribution)
     );
+}
+
+#[test]
+fn field_value_accumulator_timed_and_untimed_observations_are_equivalent() {
+    let config = profile_config();
+    let parent = json!({"field": "value", "other": 7});
+    let parent_object = parent.as_object().expect("parent fixture is an object");
+    let values = [
+        json!("hot"),
+        json!("hot"),
+        json!("warm"),
+        json!(null),
+        json!({"nested": true}),
+        json!(["a", "b"]),
+    ];
+    let mut untimed = FieldValueAccumulator::new("field-a".to_string(), &config);
+    let mut timed = FieldValueAccumulator::new("field-a".to_string(), &config);
+
+    for (index, value) in values.iter().enumerate() {
+        untimed.observe(index as u64, "$.field", value, parent_object, &config);
+
+        let mut timing = profile_json_refs::field::accumulator::FieldValueObserveTiming::default();
+        timed.observe_with_timing(
+            index as u64,
+            "$.field",
+            value,
+            parent_object,
+            &config,
+            &mut timing,
+        );
+    }
+
+    assert_eq!(untimed.finish(&config), timed.finish(&config));
 }

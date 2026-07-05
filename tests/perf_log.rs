@@ -201,11 +201,32 @@ fn perf_log_emits_scan_and_sqlite_detail_events() {
     assert_perf_contains(&stderr, "phase=sqlite.flush.commit");
     assert_perf_contains(&stderr, "elapsed_ms=");
     assert_perf_contains(&stderr, "rows=");
+    assert_perf_contains(&stderr, "rows_deleted=");
 
     assert_perf_contains(&stderr, "phase=scan.chunk index=0 reason=final");
     assert!(
         !stderr.contains("phase=scan.chunk index=0 reason=progress"),
         "scan completion should not emit duplicate progress and final chunks for the same window:\n{stderr}"
+    );
+}
+
+#[test]
+fn field_value_hot_path_avoids_heavy_hitter_key_materialization() {
+    let source =
+        std::fs::read_to_string("src/field/accumulator.rs").expect("read field accumulator");
+    let observe_inner = source
+        .split("fn observe_inner(")
+        .nth(1)
+        .and_then(|tail| tail.split("pub fn value_sample_rows(").next())
+        .expect("extract FieldValueAccumulator::observe_inner");
+
+    assert!(
+        !observe_inner.contains("heavy_hitters.keys()"),
+        "field value hot path must not materialize heavy hitter keys for per-observation cleanup"
+    );
+    assert!(
+        !observe_inner.contains("format!(\"{key:?}\")"),
+        "field value hot path must not allocate debug-formatted ValueKey hash input"
     );
 }
 

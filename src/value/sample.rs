@@ -1,10 +1,13 @@
 use std::collections::HashSet;
+use std::time::Instant;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::config::ProfileConfig;
 use crate::sketch::priority::PrioritySampler;
-use crate::value::identity::{ValueHashTiming, value_hash, value_hash_with_timing};
+use crate::value::identity::{
+    ValueHashTiming, ValueKey, value_hash_from_key, value_key, value_key_with_canonical_timing,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ValueSampleKind {
@@ -65,17 +68,18 @@ impl ValueSampleAccumulator {
         source_path: &str,
         field_profile_id: &str,
         value: &Value,
-        parent_object: &Value,
+        parent_object: &Map<String, Value>,
         config: &ProfileConfig,
     ) {
-        self.observe_inner(
+        let key = value_key(value);
+        self.observe_keyed(
             document_index,
             source_path,
             field_profile_id,
+            &key,
             value,
             parent_object,
             config,
-            None,
         );
     }
 
@@ -85,7 +89,55 @@ impl ValueSampleAccumulator {
         source_path: &str,
         field_profile_id: &str,
         value: &Value,
-        parent_object: &Value,
+        parent_object: &Map<String, Value>,
+        config: &ProfileConfig,
+        timing: &mut ValueHashTiming,
+    ) {
+        let started = Instant::now();
+        let key = value_key_with_canonical_timing(value, &mut timing.value_canonicalize_elapsed);
+        timing.value_hash_elapsed += started.elapsed();
+        self.observe_keyed_with_timing(
+            document_index,
+            source_path,
+            field_profile_id,
+            &key,
+            value,
+            parent_object,
+            config,
+            timing,
+        );
+    }
+
+    pub fn observe_keyed(
+        &mut self,
+        document_index: u64,
+        source_path: &str,
+        field_profile_id: &str,
+        value_key: &ValueKey,
+        value: &Value,
+        parent_object: &Map<String, Value>,
+        config: &ProfileConfig,
+    ) {
+        self.observe_inner(
+            document_index,
+            source_path,
+            field_profile_id,
+            value_key,
+            value,
+            parent_object,
+            config,
+            None,
+        );
+    }
+
+    pub fn observe_keyed_with_timing(
+        &mut self,
+        document_index: u64,
+        source_path: &str,
+        field_profile_id: &str,
+        value_key: &ValueKey,
+        value: &Value,
+        parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         timing: &mut ValueHashTiming,
     ) {
@@ -93,6 +145,7 @@ impl ValueSampleAccumulator {
             document_index,
             source_path,
             field_profile_id,
+            value_key,
             value,
             parent_object,
             config,
@@ -105,8 +158,9 @@ impl ValueSampleAccumulator {
         document_index: u64,
         source_path: &str,
         field_profile_id: &str,
+        value_key: &ValueKey,
         value: &Value,
-        parent_object: &Value,
+        parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         mut timing: Option<&mut ValueHashTiming>,
     ) {
@@ -114,6 +168,7 @@ impl ValueSampleAccumulator {
             document_index,
             source_path,
             field_profile_id,
+            value_key,
             value,
             parent_object,
             config,
@@ -199,8 +254,9 @@ struct ValueSampleObservation<'a> {
     document_index: u64,
     source_path: &'a str,
     field_profile_id: &'a str,
+    value_key: &'a ValueKey,
     value: &'a Value,
-    parent_object: &'a Value,
+    parent_object: &'a Map<String, Value>,
     config: &'a ProfileConfig,
 }
 
@@ -221,11 +277,11 @@ fn make_value_sample_row(
         &parent_json_raw,
         observation.config.sampling.parent_object_json_limit_bytes,
     );
-    let value_hash = if let Some(timing) = timing {
-        value_hash_with_timing(observation.value, timing)
-    } else {
-        value_hash(observation.value)
-    };
+    let started = timing.as_ref().map(|_| Instant::now());
+    let value_hash = value_hash_from_key(observation.value_key);
+    if let (Some(timing), Some(started)) = (timing, started) {
+        timing.value_hash_elapsed += started.elapsed();
+    }
     let id_input = format!(
         "{}\x1f{}\x1f{}\x1f{}\x1f{value_hash}\x1f{}",
         observation.field_profile_id,

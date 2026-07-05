@@ -36,8 +36,26 @@ fn value_samples_capture_first_seen_and_first_non_empty() {
     let config = profile_config();
     let mut accumulator = FieldValueAccumulator::new("field-a".to_string(), &config);
 
-    accumulator.observe(0, "$.field", &json!(null), &json!({"field": null}), &config);
-    accumulator.observe(1, "$.field", &json!(""), &json!({"field": ""}), &config);
+    let null_parent = json!({"field": null});
+    accumulator.observe(
+        0,
+        "$.field",
+        &json!(null),
+        null_parent
+            .as_object()
+            .expect("parent fixture is an object"),
+        &config,
+    );
+    let empty_parent = json!({"field": ""});
+    accumulator.observe(
+        1,
+        "$.field",
+        &json!(""),
+        empty_parent
+            .as_object()
+            .expect("parent fixture is an object"),
+        &config,
+    );
 
     let rows = accumulator.value_sample_rows();
     let first_seen = rows
@@ -61,11 +79,12 @@ fn value_priority_samples_are_bounded() {
     let mut accumulator = FieldValueAccumulator::new("field-a".to_string(), &config);
 
     for index in 0..20 {
+        let parent = json!({"field": format!("value-{index}")});
         accumulator.observe(
             index,
             "$.field",
             &json!(format!("value-{index}")),
-            &json!({"field": format!("value-{index}")}),
+            parent.as_object().expect("parent fixture is an object"),
             &config,
         );
     }
@@ -88,11 +107,12 @@ fn heavy_hitter_context_samples_are_not_emitted_in_rc2() {
     let mut accumulator = FieldValueAccumulator::new("field-a".to_string(), &config);
 
     for index in 0..10 {
+        let parent = json!({"field": "hot"});
         accumulator.observe(
             index,
             "$.field",
             &json!("hot"),
-            &json!({"field": "hot"}),
+            parent.as_object().expect("parent fixture is an object"),
             &config,
         );
     }

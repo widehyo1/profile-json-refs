@@ -13,6 +13,13 @@ pub struct Counter {
     pub error: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpaceSavingUpdate<K> {
+    Existing,
+    Inserted,
+    Replaced { evicted: K },
+}
+
 impl<K> SpaceSaving<K>
 where
     K: Hash + Eq + Clone + Ord,
@@ -25,18 +32,22 @@ where
     }
 
     pub fn observe(&mut self, key: K) {
+        let _ = self.observe_update(key);
+    }
+
+    pub fn observe_update(&mut self, key: K) -> SpaceSavingUpdate<K> {
         if self.limit == 0 {
-            return;
+            return SpaceSavingUpdate::Existing;
         }
 
         if let Some(counter) = self.counters.get_mut(&key) {
             counter.count += 1;
-            return;
+            return SpaceSavingUpdate::Existing;
         }
 
         if self.counters.len() < self.limit {
             self.counters.insert(key, Counter { count: 1, error: 0 });
-            return;
+            return SpaceSavingUpdate::Inserted;
         }
 
         let victim_key = self
@@ -60,6 +71,9 @@ where
                 error: victim.count,
             },
         );
+        SpaceSavingUpdate::Replaced {
+            evicted: victim_key,
+        }
     }
 
     pub fn contains_key(&self, key: &K) -> bool {

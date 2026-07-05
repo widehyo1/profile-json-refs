@@ -135,6 +135,7 @@ pub fn run(config: ProfileConfig) -> Result<ProfileReport> {
         }
     }
     visitor.emit_scan_progress();
+    visitor.emit_scan_accumulators();
     visitor.record_perf("scan.read_parse_walk", scan_start.elapsed());
 
     visitor.finish(source_format, out_path, quiet, start.elapsed())
@@ -223,12 +224,25 @@ impl ProfileRunVisitor {
         ));
     }
 
+    fn emit_scan_accumulators(&mut self) {
+        self.perf_log.event(&format!(
+            "phase=scan.accumulators pending_shapes={} pending_shape_fields={} pending_object_samples={} pending_value_samples={} field_value_accumulators={}",
+            self.shape_accumulator.shape_row_count(),
+            self.shape_fields.len(),
+            self.shape_accumulator.pending_object_sample_count(),
+            self.pending_value_sample_count(),
+            self.field_values.len()
+        ));
+    }
+
     fn emit_flush_chunk(&mut self, chunk: &ProfileChunk) {
         self.perf_log.event(&format!(
-            "phase=flush.chunk shapes={} fields={} object_samples={} value_samples={}",
+            "phase=flush.chunk shapes={} fields={} object_samples={} field_summaries={} field_values={} value_samples={}",
             chunk.shapes.len(),
             chunk.shape_fields.len(),
             chunk.object_samples.len(),
+            chunk.field_summaries.len(),
+            chunk.field_values.len(),
             chunk.value_samples.len()
         ));
     }

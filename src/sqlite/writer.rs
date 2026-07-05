@@ -210,10 +210,32 @@ impl ProfileWriter {
         tx.commit()?;
         perf_log.elapsed_event("sqlite.flush.commit", started, format_args!("rows=0"));
 
+        let started = Instant::now();
         self.prune_object_priority_samples(&touched_samples.object_priority)?;
+        perf_log.elapsed_event(
+            "sqlite.prune.object_priority",
+            started,
+            format_args!("keys={}", touched_samples.object_priority.len()),
+        );
+
+        let started = Instant::now();
         self.prune_value_priority_samples(&touched_samples.value_priority_fields)?;
+        perf_log.elapsed_event(
+            "sqlite.prune.value_priority",
+            started,
+            format_args!("fields={}", touched_samples.value_priority_fields.len()),
+        );
+
         if self.heavy_hitter_context_sample_limit > 0 {
+            let started = Instant::now();
             self.prune_heavy_hitter_context_samples(&touched_samples.heavy_hitter_context)?;
+            perf_log.elapsed_event(
+                "sqlite.prune.heavy_hitter_context",
+                started,
+                format_args!("keys={}", touched_samples.heavy_hitter_context.len()),
+            );
+        } else {
+            perf_log.event("phase=sqlite.prune.heavy_hitter_context skipped=1 keys=0");
         }
 
         Ok(())

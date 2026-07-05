@@ -12,7 +12,6 @@ const REQUIRED_BUCKETS: &[&str] = &[
     "scan.flush_fields",
     "scan.flush_values",
     "scan.flush_samples",
-    "sqlite.prune_samples",
     "sqlite.indexes",
     "stdout.summary",
 ];

@@ -286,7 +286,6 @@ impl ProfileRunVisitor {
             final_chunk.value_samples.extend(output.value_samples);
         }
         self.flush_chunk(final_chunk)?;
-        self.perf_log.record("sqlite.prune_samples", Duration::ZERO);
         self.perf_log
             .time_result("sqlite.indexes", || self.writer.create_indexes())?;
         let summary = self

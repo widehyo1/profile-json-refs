@@ -30,6 +30,7 @@ use crate::scan::visitor::ScanVisitor;
 use crate::shape::accumulator::ShapeAccumulator;
 use crate::sqlite::writer::{ProfileChunk, ProfileWriter, SourceCounters};
 use crate::util::json_type::JsonType;
+use crate::value::sample::PendingRowDelta;
 
 pub struct ProfileReport {
     pub out_path: PathBuf,
@@ -321,6 +322,7 @@ struct ProfileRunVisitor {
     shape_accumulator: ShapeAccumulator,
     shape_fields: HashMap<String, ShapeFieldRow>,
     field_values: HashMap<String, FieldValueAccumulator>,
+    pending_value_sample_rows: usize,
     warnings: Vec<ProfileWarning>,
     warned_canonical_path_unavailable: bool,
     perf_log: PerfLog,
@@ -343,6 +345,7 @@ impl ProfileRunVisitor {
             shape_accumulator: ShapeAccumulator::default(),
             shape_fields: HashMap::new(),
             field_values: HashMap::new(),
+            pending_value_sample_rows: 0,
             warnings,
             warned_canonical_path_unavailable: false,
             perf_log,
@@ -380,7 +383,7 @@ impl ProfileRunVisitor {
             self.shape_accumulator.shape_row_count(),
             self.shape_fields.len(),
             self.shape_accumulator.pending_object_sample_count(),
-            self.pending_value_sample_count(),
+            self.pending_value_sample_rows,
             self.field_values.len()
         ));
     }
@@ -511,7 +514,7 @@ impl ProfileRunVisitor {
             self.shape_accumulator.shape_row_count(),
             self.shape_fields.len(),
             self.shape_accumulator.pending_object_sample_count(),
-            self.pending_value_sample_count(),
+            self.pending_value_sample_rows,
             self.field_values.len()
         ));
     }
@@ -699,28 +702,33 @@ impl ProfileRunVisitor {
                 self.scan_perf.sampled_walk.path_elapsed += started.elapsed();
             }
 
-            let accumulator = self
-                .field_values
-                .entry(field_profile_id.clone())
-                .or_insert_with(|| FieldValueAccumulator::new(field_profile_id, &self.config));
-            if sampled_active {
-                let mut timing = FieldValueObserveTiming::default();
-                accumulator.observe_with_timing(
-                    document_index,
-                    &source_path,
-                    value,
-                    object,
-                    &self.config,
-                    &mut timing,
-                );
-                self.scan_perf.sampled_walk.value_hash_elapsed += timing.value_hash_elapsed;
-                self.scan_perf.sampled_walk.value_canonicalize_elapsed +=
-                    timing.value_canonicalize_elapsed;
-                self.scan_perf.sampled_walk.field_update_elapsed += timing.field_update_elapsed;
-                self.scan_perf.sampled_walk.sample_update_elapsed += timing.sample_update_elapsed;
-            } else {
-                accumulator.observe(document_index, &source_path, value, object, &self.config);
-            }
+            let stats = {
+                let accumulator = self
+                    .field_values
+                    .entry(field_profile_id.clone())
+                    .or_insert_with(|| FieldValueAccumulator::new(field_profile_id, &self.config));
+                if sampled_active {
+                    let mut timing = FieldValueObserveTiming::default();
+                    let stats = accumulator.observe_with_timing(
+                        document_index,
+                        &source_path,
+                        value,
+                        object,
+                        &self.config,
+                        &mut timing,
+                    );
+                    self.scan_perf.sampled_walk.value_hash_elapsed += timing.value_hash_elapsed;
+                    self.scan_perf.sampled_walk.value_canonicalize_elapsed +=
+                        timing.value_canonicalize_elapsed;
+                    self.scan_perf.sampled_walk.field_update_elapsed += timing.field_update_elapsed;
+                    self.scan_perf.sampled_walk.sample_update_elapsed +=
+                        timing.sample_update_elapsed;
+                    stats
+                } else {
+                    accumulator.observe(document_index, &source_path, value, object, &self.config)
+                }
+            };
+            self.apply_pending_value_sample_delta(stats.pending_value_sample_delta);
         }
     }
 
@@ -736,7 +744,7 @@ impl ProfileRunVisitor {
             || self.shape_fields.len() >= self.config.flush.chunk_field_rows
         {
             Some(FlushReason::DocumentChunkLimit)
-        } else if self.pending_value_sample_count() >= self.config.flush.chunk_value_sample_rows {
+        } else if self.pending_value_sample_rows >= self.config.flush.chunk_value_sample_rows {
             Some(FlushReason::ValueSampleLimit)
         } else {
             None
@@ -813,7 +821,7 @@ impl ProfileRunVisitor {
         self.shape_accumulator.shape_row_count() > 0
             || !self.shape_fields.is_empty()
             || self.shape_accumulator.pending_object_sample_count() > 0
-            || self.pending_value_sample_count() > 0
+            || self.pending_value_sample_rows > 0
     }
 
     fn has_pending_scan_completion_flush(&self) -> bool {
@@ -862,14 +870,44 @@ impl ProfileRunVisitor {
                 rows.extend(accumulator.drain_value_sample_rows());
             }
         }
+        let drained = rows.len();
+        self.pending_value_sample_rows = self
+            .pending_value_sample_rows
+            .checked_sub(drained)
+            .expect("pending value sample counter underflow during drain");
+        #[cfg(debug_assertions)]
+        self.debug_assert_pending_value_sample_counter();
         rows
     }
 
-    fn pending_value_sample_count(&self) -> usize {
+    fn apply_pending_value_sample_delta(&mut self, delta: PendingRowDelta) {
+        if delta.added == 0 && delta.removed == 0 {
+            return;
+        }
+        self.pending_value_sample_rows += delta.added;
+        self.pending_value_sample_rows = self
+            .pending_value_sample_rows
+            .checked_sub(delta.removed)
+            .expect("pending value sample counter underflow");
+        #[cfg(debug_assertions)]
+        self.debug_assert_pending_value_sample_counter();
+    }
+
+    #[cfg(debug_assertions)]
+    fn pending_value_sample_count_slow(&self) -> usize {
         self.field_values
             .values()
             .map(FieldValueAccumulator::pending_value_sample_count)
             .sum()
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_pending_value_sample_counter(&self) {
+        debug_assert_eq!(
+            self.pending_value_sample_rows,
+            self.pending_value_sample_count_slow(),
+            "pending value sample counter drifted"
+        );
     }
 
     fn warn_unresolved_context_once(&mut self, path: &SourcePath) {
@@ -923,6 +961,7 @@ impl ScanVisitor for ProfileRunVisitor {
         self.counters.total_document_count += 1;
         if self.perf_enabled() {
             let document_ordinal = self.counters.total_document_count - 1;
+            #[allow(clippy::manual_is_multiple_of)]
             let active = document_ordinal % self.scan_perf.sampled_walk.sample_interval == 0;
             self.scan_perf.sampled_walk.active = active;
             if active {

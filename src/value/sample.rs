@@ -44,6 +44,27 @@ pub struct ValueSampleRow {
     pub sample_rank: Option<u32>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PendingRowDelta {
+    pub added: usize,
+    pub removed: usize,
+}
+
+impl PendingRowDelta {
+    pub fn net(self) -> isize {
+        self.added as isize - self.removed as isize
+    }
+
+    fn add_row(&mut self) {
+        self.added += 1;
+    }
+
+    fn replace_row(&mut self) {
+        self.added += 1;
+        self.removed += 1;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ValueSampleAccumulator {
     priority_limit: usize,
@@ -70,7 +91,7 @@ impl ValueSampleAccumulator {
         value: &Value,
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
-    ) {
+    ) -> PendingRowDelta {
         let key = value_key(value);
         self.observe_keyed(
             document_index,
@@ -80,9 +101,10 @@ impl ValueSampleAccumulator {
             value,
             parent_object,
             config,
-        );
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_with_timing(
         &mut self,
         document_index: u64,
@@ -92,7 +114,7 @@ impl ValueSampleAccumulator {
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         timing: &mut ValueHashTiming,
-    ) {
+    ) -> PendingRowDelta {
         let started = Instant::now();
         let key = value_key_with_canonical_timing(value, &mut timing.value_canonicalize_elapsed);
         timing.value_hash_elapsed += started.elapsed();
@@ -105,9 +127,10 @@ impl ValueSampleAccumulator {
             parent_object,
             config,
             timing,
-        );
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_keyed(
         &mut self,
         document_index: u64,
@@ -117,7 +140,7 @@ impl ValueSampleAccumulator {
         value: &Value,
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
-    ) {
+    ) -> PendingRowDelta {
         self.observe_inner(
             document_index,
             source_path,
@@ -127,9 +150,10 @@ impl ValueSampleAccumulator {
             parent_object,
             config,
             None,
-        );
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_keyed_with_timing(
         &mut self,
         document_index: u64,
@@ -140,7 +164,7 @@ impl ValueSampleAccumulator {
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         timing: &mut ValueHashTiming,
-    ) {
+    ) -> PendingRowDelta {
         self.observe_inner(
             document_index,
             source_path,
@@ -150,9 +174,10 @@ impl ValueSampleAccumulator {
             parent_object,
             config,
             Some(timing),
-        );
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn observe_inner(
         &mut self,
         document_index: u64,
@@ -163,7 +188,8 @@ impl ValueSampleAccumulator {
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         mut timing: Option<&mut ValueHashTiming>,
-    ) {
+    ) -> PendingRowDelta {
+        let mut delta = PendingRowDelta::default();
         let observation = ValueSampleObservation {
             document_index,
             source_path,
@@ -181,6 +207,7 @@ impl ValueSampleAccumulator {
                 None,
                 timing.as_deref_mut(),
             ));
+            delta.add_row();
         }
 
         if crate::shape::sample::value_is_non_empty(value)
@@ -192,22 +219,30 @@ impl ValueSampleAccumulator {
                 None,
                 timing.as_deref_mut(),
             ));
+            delta.add_row();
         }
 
         if self.priority_limit > 0 {
             let priority = sample_priority(field_profile_id, document_index, source_path);
             if self.priority.should_accept(priority) {
+                let before = self.priority.len();
                 self.priority.push(
                     priority,
                     make_value_sample_row(
                         ValueSampleKind::PrioritySample,
                         &observation,
                         Some(priority),
-                        timing.as_deref_mut(),
+                        timing,
                     ),
                 );
+                if self.priority.len() > before {
+                    delta.add_row();
+                } else {
+                    delta.replace_row();
+                }
             }
         }
+        delta
     }
 
     pub fn rows(&self) -> Vec<ValueSampleRow> {

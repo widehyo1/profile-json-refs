@@ -10,7 +10,7 @@ use crate::sketch::space_saving::{SpaceSaving, SpaceSavingUpdate};
 use crate::util::json_type::JsonType;
 use crate::value::exact_counter::{CountMethod, ExactCounter, FieldValueRow, ValueSource};
 use crate::value::identity::{ObservedValue, ValueHashTiming, ValueKey, value_hash_from_key};
-use crate::value::sample::{ValueSampleAccumulator, ValueSampleRow};
+use crate::value::sample::{PendingRowDelta, ValueSampleAccumulator, ValueSampleRow};
 
 #[derive(Debug, Default)]
 pub struct FieldAccumulator {
@@ -109,6 +109,11 @@ pub struct FieldValueObserveTiming {
     pub sample_update_elapsed: Duration,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FieldValueObserveStats {
+    pub pending_value_sample_delta: PendingRowDelta,
+}
+
 impl FieldValueAccumulator {
     pub fn new(field_profile_id: String, config: &ProfileConfig) -> Self {
         Self {
@@ -138,7 +143,7 @@ impl FieldValueAccumulator {
         value: &Value,
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
-    ) {
+    ) -> FieldValueObserveStats {
         self.observe_inner(
             document_index,
             source_path,
@@ -146,7 +151,7 @@ impl FieldValueAccumulator {
             parent_object,
             config,
             None,
-        );
+        )
     }
 
     pub fn observe_with_timing(
@@ -157,7 +162,7 @@ impl FieldValueAccumulator {
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         timing: &mut FieldValueObserveTiming,
-    ) {
+    ) -> FieldValueObserveStats {
         self.observe_inner(
             document_index,
             source_path,
@@ -165,7 +170,7 @@ impl FieldValueAccumulator {
             parent_object,
             config,
             Some(timing),
-        );
+        )
     }
 
     fn observe_inner(
@@ -176,7 +181,7 @@ impl FieldValueAccumulator {
         parent_object: &Map<String, Value>,
         config: &ProfileConfig,
         mut timing: Option<&mut FieldValueObserveTiming>,
-    ) {
+    ) -> FieldValueObserveStats {
         let started = timing.as_ref().map(|_| Instant::now());
         update_summary(&mut self.summary, value);
         if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
@@ -215,9 +220,9 @@ impl FieldValueAccumulator {
         }
 
         let started = timing.as_ref().map(|_| Instant::now());
-        if let Some(timing) = timing.as_deref_mut() {
+        let pending_value_sample_delta = if let Some(timing) = timing.as_deref_mut() {
             let mut hash_timing = ValueHashTiming::default();
-            self.value_samples.observe_keyed_with_timing(
+            let delta = self.value_samples.observe_keyed_with_timing(
                 document_index,
                 source_path,
                 &self.field_profile_id,
@@ -229,6 +234,7 @@ impl FieldValueAccumulator {
             );
             timing.value_hash_elapsed += hash_timing.value_hash_elapsed;
             timing.value_canonicalize_elapsed += hash_timing.value_canonicalize_elapsed;
+            delta
         } else {
             self.value_samples.observe_keyed(
                 document_index,
@@ -238,10 +244,14 @@ impl FieldValueAccumulator {
                 value,
                 parent_object,
                 config,
-            );
-        }
-        if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
+            )
+        };
+        if let (Some(timing), Some(started)) = (timing, started) {
             timing.sample_update_elapsed += started.elapsed();
+        }
+
+        FieldValueObserveStats {
+            pending_value_sample_delta,
         }
     }
 

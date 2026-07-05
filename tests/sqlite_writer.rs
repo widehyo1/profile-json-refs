@@ -7,6 +7,7 @@ use profile_json_refs::config::{
 };
 use profile_json_refs::field::accumulator::ShapeFieldRow;
 use profile_json_refs::field::summary::{DistinctCountMethod, FieldSummary};
+use profile_json_refs::perf::timer::{PerfDestination, PerfLog};
 use profile_json_refs::shape::accumulator::ShapeRow;
 use profile_json_refs::shape::sample::{ObjectSampleKind, ObjectSampleRow, SampleScope};
 use profile_json_refs::sqlite::writer::{ProfileChunk, ProfileWriter, SourceCounters};
@@ -334,26 +335,34 @@ fn table_count(conn: &Connection, table: &str) -> u64 {
     .expect("query table count")
 }
 
+fn disabled_perf_log() -> PerfLog {
+    PerfLog::new(false, PerfDestination::Stderr).expect("create disabled perf log")
+}
+
 #[test]
 fn flush_writes_all_profile_fact_tables() {
     let dir = unique_temp_dir("all-tables");
     let out = dir.join("profile.sqlite");
     let config = test_config(&out);
     let mut writer = ProfileWriter::open(&out, &config).expect("open writer");
+    let mut perf_log = disabled_perf_log();
 
     writer
-        .flush_chunk(ProfileChunk {
-            shapes: vec![shape_row()],
-            shape_fields: vec![shape_field_row()],
-            object_samples: vec![object_sample_row(
-                "sample-first",
-                ObjectSampleKind::FirstSeen,
-                None,
-            )],
-            field_summaries: vec![field_summary()],
-            field_values: vec![field_value_row()],
-            value_samples: vec![value_sample_row("value-sample-first")],
-        })
+        .flush_chunk(
+            ProfileChunk {
+                shapes: vec![shape_row()],
+                shape_fields: vec![shape_field_row()],
+                object_samples: vec![object_sample_row(
+                    "sample-first",
+                    ObjectSampleKind::FirstSeen,
+                    None,
+                )],
+                field_summaries: vec![field_summary()],
+                field_values: vec![field_value_row()],
+                value_samples: vec![value_sample_row("value-sample-first")],
+            },
+            &mut perf_log,
+        )
         .expect("flush chunk");
 
     let conn = writer.connection();
@@ -371,34 +380,41 @@ fn first_seen_object_samples_use_insert_or_ignore_across_flushes() {
     let out = dir.join("profile.sqlite");
     let config = test_config(&out);
     let mut writer = ProfileWriter::open(&out, &config).expect("open writer");
+    let mut perf_log = disabled_perf_log();
 
     writer
-        .flush_chunk(ProfileChunk {
-            shapes: vec![shape_row()],
-            shape_fields: Vec::new(),
-            object_samples: vec![object_sample_row(
-                "sample-first-1",
-                ObjectSampleKind::FirstSeen,
-                None,
-            )],
-            field_summaries: Vec::new(),
-            field_values: Vec::new(),
-            value_samples: Vec::new(),
-        })
+        .flush_chunk(
+            ProfileChunk {
+                shapes: vec![shape_row()],
+                shape_fields: Vec::new(),
+                object_samples: vec![object_sample_row(
+                    "sample-first-1",
+                    ObjectSampleKind::FirstSeen,
+                    None,
+                )],
+                field_summaries: Vec::new(),
+                field_values: Vec::new(),
+                value_samples: Vec::new(),
+            },
+            &mut perf_log,
+        )
         .expect("first flush");
     writer
-        .flush_chunk(ProfileChunk {
-            shapes: Vec::new(),
-            shape_fields: Vec::new(),
-            object_samples: vec![object_sample_row(
-                "sample-first-2",
-                ObjectSampleKind::FirstSeen,
-                None,
-            )],
-            field_summaries: Vec::new(),
-            field_values: Vec::new(),
-            value_samples: Vec::new(),
-        })
+        .flush_chunk(
+            ProfileChunk {
+                shapes: Vec::new(),
+                shape_fields: Vec::new(),
+                object_samples: vec![object_sample_row(
+                    "sample-first-2",
+                    ObjectSampleKind::FirstSeen,
+                    None,
+                )],
+                field_summaries: Vec::new(),
+                field_values: Vec::new(),
+                value_samples: Vec::new(),
+            },
+            &mut perf_log,
+        )
         .expect("second flush");
 
     assert_eq!(table_count(writer.connection(), "prof_object_sample"), 1);
@@ -410,23 +426,27 @@ fn priority_object_samples_are_pruned_and_ranked_after_flush() {
     let out = dir.join("profile.sqlite");
     let config = test_config(&out);
     let mut writer = ProfileWriter::open(&out, &config).expect("open writer");
+    let mut perf_log = disabled_perf_log();
 
     writer
-        .flush_chunk(ProfileChunk {
-            shapes: vec![shape_row()],
-            shape_fields: Vec::new(),
-            object_samples: vec![
-                object_sample_row("priority-worse", ObjectSampleKind::PrioritySample, Some(20)),
-                object_sample_row(
-                    "priority-better",
-                    ObjectSampleKind::PrioritySample,
-                    Some(10),
-                ),
-            ],
-            field_summaries: Vec::new(),
-            field_values: Vec::new(),
-            value_samples: Vec::new(),
-        })
+        .flush_chunk(
+            ProfileChunk {
+                shapes: vec![shape_row()],
+                shape_fields: Vec::new(),
+                object_samples: vec![
+                    object_sample_row("priority-worse", ObjectSampleKind::PrioritySample, Some(20)),
+                    object_sample_row(
+                        "priority-better",
+                        ObjectSampleKind::PrioritySample,
+                        Some(10),
+                    ),
+                ],
+                field_summaries: Vec::new(),
+                field_values: Vec::new(),
+                value_samples: Vec::new(),
+            },
+            &mut perf_log,
+        )
         .expect("flush priority samples");
 
     let kept: (String, u32) = writer
@@ -448,27 +468,34 @@ fn value_priority_prune_keeps_rows_bounded_across_chunk_flushes() {
     let mut config = test_config(&out);
     config.sampling.value_priority_limit_per_field_profile = 2;
     let mut writer = ProfileWriter::open(&out, &config).expect("open writer");
+    let mut perf_log = disabled_perf_log();
 
     writer
-        .flush_chunk(ProfileChunk {
-            shapes: vec![shape_row()],
-            shape_fields: vec![shape_field_row()],
-            value_samples: vec![
-                priority_value_sample_row("priority-30", "field-1", 30, 0),
-                priority_value_sample_row("priority-20", "field-1", 20, 1),
-            ],
-            ..ProfileChunk::default()
-        })
+        .flush_chunk(
+            ProfileChunk {
+                shapes: vec![shape_row()],
+                shape_fields: vec![shape_field_row()],
+                value_samples: vec![
+                    priority_value_sample_row("priority-30", "field-1", 30, 0),
+                    priority_value_sample_row("priority-20", "field-1", 20, 1),
+                ],
+                ..ProfileChunk::default()
+            },
+            &mut perf_log,
+        )
         .expect("first flush");
 
     writer
-        .flush_chunk(ProfileChunk {
-            value_samples: vec![
-                priority_value_sample_row("priority-10", "field-1", 10, 2),
-                priority_value_sample_row("priority-40", "field-1", 40, 3),
-            ],
-            ..ProfileChunk::default()
-        })
+        .flush_chunk(
+            ProfileChunk {
+                value_samples: vec![
+                    priority_value_sample_row("priority-10", "field-1", 10, 2),
+                    priority_value_sample_row("priority-40", "field-1", 40, 3),
+                ],
+                ..ProfileChunk::default()
+            },
+            &mut perf_log,
+        )
         .expect("second flush");
 
     let count: u64 = writer
@@ -504,15 +531,19 @@ fn source_summary_is_derived_from_persisted_profile_counts() {
     let out = dir.join("profile.sqlite");
     let config = test_config(&out);
     let mut writer = ProfileWriter::open(&out, &config).expect("open writer");
+    let mut perf_log = disabled_perf_log();
     writer
-        .flush_chunk(ProfileChunk {
-            shapes: vec![shape_row()],
-            shape_fields: vec![shape_field_row()],
-            object_samples: Vec::new(),
-            field_summaries: vec![field_summary()],
-            field_values: vec![field_value_row()],
-            value_samples: Vec::new(),
-        })
+        .flush_chunk(
+            ProfileChunk {
+                shapes: vec![shape_row()],
+                shape_fields: vec![shape_field_row()],
+                object_samples: Vec::new(),
+                field_summaries: vec![field_summary()],
+                field_values: vec![field_value_row()],
+                value_samples: Vec::new(),
+            },
+            &mut perf_log,
+        )
         .expect("flush chunk");
 
     let summary = writer

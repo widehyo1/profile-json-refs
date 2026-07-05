@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 use rusqlite::{Connection, Transaction, params};
 
@@ -9,6 +10,7 @@ use crate::config::ProfileConfig;
 use crate::error::Result;
 use crate::field::accumulator::ShapeFieldRow;
 use crate::field::summary::FieldSummary;
+use crate::perf::timer::PerfLog;
 use crate::shape::accumulator::ShapeRow;
 use crate::shape::sample::{ObjectSampleKind, ObjectSampleRow, SampleScope};
 use crate::value::exact_counter::FieldValueRow;
@@ -148,20 +150,65 @@ impl ProfileWriter {
         &self.conn
     }
 
-    pub fn flush_chunk(&mut self, chunk: ProfileChunk) -> Result<()> {
+    pub fn flush_chunk(&mut self, chunk: ProfileChunk, perf_log: &mut PerfLog) -> Result<()> {
         if chunk.is_empty() {
             return Ok(());
         }
 
         let touched_samples = TouchedSampleKeys::from_chunk(&chunk);
         let tx = self.conn.transaction()?;
+
+        let started = Instant::now();
         Self::write_shapes(&tx, &chunk.shapes)?;
+        perf_log.elapsed_event(
+            "sqlite.flush.shapes",
+            started,
+            format_args!("rows={}", chunk.shapes.len()),
+        );
+
+        let started = Instant::now();
         Self::write_shape_fields(&tx, &chunk.shape_fields)?;
+        perf_log.elapsed_event(
+            "sqlite.flush.shape_fields",
+            started,
+            format_args!("rows={}", chunk.shape_fields.len()),
+        );
+
+        let started = Instant::now();
         Self::write_object_samples(&tx, &chunk.object_samples)?;
+        perf_log.elapsed_event(
+            "sqlite.flush.object_samples",
+            started,
+            format_args!("rows={}", chunk.object_samples.len()),
+        );
+
+        let started = Instant::now();
         Self::write_field_summaries(&tx, &chunk.field_summaries)?;
+        perf_log.elapsed_event(
+            "sqlite.flush.field_summaries",
+            started,
+            format_args!("rows={}", chunk.field_summaries.len()),
+        );
+
+        let started = Instant::now();
         Self::write_field_values(&tx, &chunk.field_values)?;
+        perf_log.elapsed_event(
+            "sqlite.flush.field_values",
+            started,
+            format_args!("rows={}", chunk.field_values.len()),
+        );
+
+        let started = Instant::now();
         Self::write_value_samples(&tx, &chunk.value_samples)?;
+        perf_log.elapsed_event(
+            "sqlite.flush.value_samples",
+            started,
+            format_args!("rows={}", chunk.value_samples.len()),
+        );
+
+        let started = Instant::now();
         tx.commit()?;
+        perf_log.elapsed_event("sqlite.flush.commit", started, format_args!("rows=0"));
 
         self.prune_object_priority_samples(&touched_samples.object_priority)?;
         self.prune_value_priority_samples(&touched_samples.value_priority_fields)?;

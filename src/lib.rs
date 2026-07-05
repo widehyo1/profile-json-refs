@@ -376,7 +376,7 @@ impl ProfileRunVisitor {
         if !chunk.is_empty() {
             self.emit_flush_chunk(&chunk);
         }
-        self.writer.flush_chunk(chunk)
+        self.writer.flush_chunk(chunk, &mut self.perf_log)
     }
 
     fn drain_pending_chunk(&mut self) -> ProfileChunk {

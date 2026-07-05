@@ -1,9 +1,23 @@
+use std::time::Duration;
+
 use serde_json::{Map, Value};
 
 use crate::error::Result;
 use crate::scan::path::SourcePath;
 
 pub trait ScanVisitor {
+    fn perf_enabled(&self) -> bool {
+        false
+    }
+
+    fn record_scan_bytes(&mut self, _bytes: u64) {}
+
+    fn record_scan_parse_elapsed(&mut self, _duration: Duration) {}
+
+    fn begin_scan_walk_timing(&mut self) {}
+
+    fn end_scan_walk_timing(&mut self) {}
+
     fn begin_document(&mut self, document_index: u64) -> Result<()>;
     fn end_document(&mut self, document_index: u64) -> Result<()>;
 

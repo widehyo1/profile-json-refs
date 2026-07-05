@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -9,6 +11,12 @@ pub enum ValueKey {
     String(String),
     ObjectHash(String),
     ArrayHash(String),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValueHashTiming {
+    pub value_hash_elapsed: Duration,
+    pub value_canonicalize_elapsed: Duration,
 }
 
 impl ValueKey {
@@ -26,6 +34,17 @@ impl ValueKey {
 }
 
 pub fn value_key(value: &Value) -> ValueKey {
+    value_key_inner(value, None)
+}
+
+pub fn value_key_with_canonical_timing(
+    value: &Value,
+    value_canonicalize_elapsed: &mut Duration,
+) -> ValueKey {
+    value_key_inner(value, Some(value_canonicalize_elapsed))
+}
+
+fn value_key_inner(value: &Value, value_canonicalize_elapsed: Option<&mut Duration>) -> ValueKey {
     match value {
         Value::Null => ValueKey::Null,
         Value::Bool(value) => ValueKey::Bool(*value),
@@ -35,11 +54,11 @@ pub fn value_key(value: &Value) -> ValueKey {
         Value::Number(number) => ValueKey::Number(number.to_string()),
         Value::String(value) => ValueKey::String(value.clone()),
         Value::Object(_) => {
-            let canonical = canonical_json(value);
+            let canonical = canonical_json_timed(value, value_canonicalize_elapsed);
             ValueKey::ObjectHash(crate::util::hash::stable_hex(canonical.as_bytes()))
         }
         Value::Array(_) => {
-            let canonical = canonical_json(value);
+            let canonical = canonical_json_timed(value, value_canonicalize_elapsed);
             ValueKey::ArrayHash(crate::util::hash::stable_hex(canonical.as_bytes()))
         }
     }
@@ -49,8 +68,27 @@ pub fn value_hash(value: &Value) -> String {
     value_hash_from_key(&value_key(value))
 }
 
+pub fn value_hash_with_timing(value: &Value, timing: &mut ValueHashTiming) -> String {
+    let started = Instant::now();
+    let key = value_key_with_canonical_timing(value, &mut timing.value_canonicalize_elapsed);
+    let hash = value_hash_from_key(&key);
+    timing.value_hash_elapsed += started.elapsed();
+    hash
+}
+
 pub fn value_hash_from_key(key: &ValueKey) -> String {
     crate::util::hash::stable_hex(format!("{key:?}").as_bytes())
+}
+
+fn canonical_json_timed(value: &Value, elapsed: Option<&mut Duration>) -> String {
+    if let Some(elapsed) = elapsed {
+        let started = Instant::now();
+        let canonical = canonical_json(value);
+        *elapsed += started.elapsed();
+        canonical
+    } else {
+        canonical_json(value)
+    }
 }
 
 pub fn canonical_json(value: &Value) -> String {

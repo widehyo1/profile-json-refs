@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::config::ProfileConfig;
 use crate::sketch::priority::PrioritySampler;
-use crate::value::identity::value_hash;
+use crate::value::identity::{ValueHashTiming, value_hash, value_hash_with_timing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ValueSampleKind {
@@ -68,6 +68,48 @@ impl ValueSampleAccumulator {
         parent_object: &Value,
         config: &ProfileConfig,
     ) {
+        self.observe_inner(
+            document_index,
+            source_path,
+            field_profile_id,
+            value,
+            parent_object,
+            config,
+            None,
+        );
+    }
+
+    pub fn observe_with_timing(
+        &mut self,
+        document_index: u64,
+        source_path: &str,
+        field_profile_id: &str,
+        value: &Value,
+        parent_object: &Value,
+        config: &ProfileConfig,
+        timing: &mut ValueHashTiming,
+    ) {
+        self.observe_inner(
+            document_index,
+            source_path,
+            field_profile_id,
+            value,
+            parent_object,
+            config,
+            Some(timing),
+        );
+    }
+
+    fn observe_inner(
+        &mut self,
+        document_index: u64,
+        source_path: &str,
+        field_profile_id: &str,
+        value: &Value,
+        parent_object: &Value,
+        config: &ProfileConfig,
+        mut timing: Option<&mut ValueHashTiming>,
+    ) {
         let observation = ValueSampleObservation {
             document_index,
             source_path,
@@ -82,6 +124,7 @@ impl ValueSampleAccumulator {
                 ValueSampleKind::FirstSeen,
                 &observation,
                 None,
+                timing.as_deref_mut(),
             ));
         }
 
@@ -92,6 +135,7 @@ impl ValueSampleAccumulator {
                 ValueSampleKind::FirstNonEmpty,
                 &observation,
                 None,
+                timing.as_deref_mut(),
             ));
         }
 
@@ -104,6 +148,7 @@ impl ValueSampleAccumulator {
                         ValueSampleKind::PrioritySample,
                         &observation,
                         Some(priority),
+                        timing.as_deref_mut(),
                     ),
                 );
             }
@@ -163,6 +208,7 @@ fn make_value_sample_row(
     kind: ValueSampleKind,
     observation: &ValueSampleObservation<'_>,
     priority: Option<u64>,
+    timing: Option<&mut ValueHashTiming>,
 ) -> ValueSampleRow {
     let value_json_raw = serde_json::to_string(observation.value).expect("JSON value serializes");
     let (value_json, value_json_truncated) = crate::util::truncate::truncate_utf8(
@@ -175,7 +221,11 @@ fn make_value_sample_row(
         &parent_json_raw,
         observation.config.sampling.parent_object_json_limit_bytes,
     );
-    let value_hash = value_hash(observation.value);
+    let value_hash = if let Some(timing) = timing {
+        value_hash_with_timing(observation.value, timing)
+    } else {
+        value_hash(observation.value)
+    };
     let id_input = format!(
         "{}\x1f{}\x1f{}\x1f{}\x1f{value_hash}\x1f{}",
         observation.field_profile_id,

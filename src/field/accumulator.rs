@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
@@ -8,7 +9,9 @@ use crate::sketch::hll::HyperLogLog;
 use crate::sketch::space_saving::SpaceSaving;
 use crate::util::json_type::JsonType;
 use crate::value::exact_counter::{CountMethod, ExactCounter, FieldValueRow, ValueSource};
-use crate::value::identity::{ValueKey, value_hash_from_key, value_key};
+use crate::value::identity::{
+    ValueHashTiming, ValueKey, value_hash_from_key, value_key, value_key_with_canonical_timing,
+};
 use crate::value::sample::{ValueSampleAccumulator, ValueSampleRow};
 
 #[derive(Debug, Default)]
@@ -100,6 +103,14 @@ pub struct FieldProfileOutput {
     pub value_samples: Vec<ValueSampleRow>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FieldValueObserveTiming {
+    pub value_hash_elapsed: Duration,
+    pub value_canonicalize_elapsed: Duration,
+    pub field_update_elapsed: Duration,
+    pub sample_update_elapsed: Duration,
+}
+
 impl FieldValueAccumulator {
     pub fn new(field_profile_id: String, config: &ProfileConfig) -> Self {
         Self {
@@ -130,10 +141,62 @@ impl FieldValueAccumulator {
         parent_object: &Value,
         config: &ProfileConfig,
     ) {
-        update_summary(&mut self.summary, value);
+        self.observe_inner(
+            document_index,
+            source_path,
+            value,
+            parent_object,
+            config,
+            None,
+        );
+    }
 
-        let key = value_key(value);
+    pub fn observe_with_timing(
+        &mut self,
+        document_index: u64,
+        source_path: &str,
+        value: &Value,
+        parent_object: &Value,
+        config: &ProfileConfig,
+        timing: &mut FieldValueObserveTiming,
+    ) {
+        self.observe_inner(
+            document_index,
+            source_path,
+            value,
+            parent_object,
+            config,
+            Some(timing),
+        );
+    }
+
+    fn observe_inner(
+        &mut self,
+        document_index: u64,
+        source_path: &str,
+        value: &Value,
+        parent_object: &Value,
+        config: &ProfileConfig,
+        mut timing: Option<&mut FieldValueObserveTiming>,
+    ) {
+        let started = timing.as_ref().map(|_| Instant::now());
+        update_summary(&mut self.summary, value);
+        if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
+            timing.field_update_elapsed += started.elapsed();
+        }
+
+        let started = timing.as_ref().map(|_| Instant::now());
+        let key = if let Some(timing) = timing.as_deref_mut() {
+            value_key_with_canonical_timing(value, &mut timing.value_canonicalize_elapsed)
+        } else {
+            value_key(value)
+        };
         let hash64 = crate::util::hash::stable_u64(format!("{key:?}").as_bytes());
+        if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
+            timing.value_hash_elapsed += started.elapsed();
+        }
+
+        let started = timing.as_ref().map(|_| Instant::now());
         self.hll.insert_hash(hash64);
         self.heavy_hitters.observe(key.clone());
         self.exact.observe(value);
@@ -145,14 +208,37 @@ impl FieldValueAccumulator {
         let active_keys = self.heavy_hitters.keys();
         self.heavy_hitter_values
             .retain(|key, _| active_keys.contains(key));
-        self.value_samples.observe(
-            document_index,
-            source_path,
-            &self.field_profile_id,
-            value,
-            parent_object,
-            config,
-        );
+        if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
+            timing.field_update_elapsed += started.elapsed();
+        }
+
+        let started = timing.as_ref().map(|_| Instant::now());
+        if let Some(timing) = timing.as_deref_mut() {
+            let mut hash_timing = ValueHashTiming::default();
+            self.value_samples.observe_with_timing(
+                document_index,
+                source_path,
+                &self.field_profile_id,
+                value,
+                parent_object,
+                config,
+                &mut hash_timing,
+            );
+            timing.value_hash_elapsed += hash_timing.value_hash_elapsed;
+            timing.value_canonicalize_elapsed += hash_timing.value_canonicalize_elapsed;
+        } else {
+            self.value_samples.observe(
+                document_index,
+                source_path,
+                &self.field_profile_id,
+                value,
+                parent_object,
+                config,
+            );
+        }
+        if let (Some(timing), Some(started)) = (timing.as_deref_mut(), started) {
+            timing.sample_update_elapsed += started.elapsed();
+        }
     }
 
     pub fn value_sample_rows(&self) -> Vec<ValueSampleRow> {

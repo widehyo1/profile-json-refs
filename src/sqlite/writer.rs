@@ -66,6 +66,12 @@ impl TouchedSampleKeys {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct PruneStats {
+    touched: usize,
+    rows_deleted: u64,
+}
+
 impl ProfileChunk {
     pub fn is_empty(&self) -> bool {
         self.shapes.is_empty()
@@ -150,6 +156,20 @@ impl ProfileWriter {
         &self.conn
     }
 
+    pub fn close(self, perf_log: &mut PerfLog) -> Result<()> {
+        let started = Instant::now();
+        match self.conn.close() {
+            Ok(()) => {
+                perf_log.elapsed_event("sqlite.close", started, format_args!("closed=1"));
+                Ok(())
+            }
+            Err((_conn, err)) => {
+                perf_log.elapsed_event("sqlite.close", started, format_args!("closed=0"));
+                Err(err.into())
+            }
+        }
+    }
+
     pub fn flush_chunk(&mut self, chunk: ProfileChunk, perf_log: &mut PerfLog) -> Result<()> {
         if chunk.is_empty() {
             return Ok(());
@@ -211,31 +231,43 @@ impl ProfileWriter {
         perf_log.elapsed_event("sqlite.flush.commit", started, format_args!("rows=0"));
 
         let started = Instant::now();
-        self.prune_object_priority_samples(&touched_samples.object_priority)?;
+        let object_prune = self.prune_object_priority_samples(&touched_samples.object_priority)?;
         perf_log.elapsed_event(
             "sqlite.prune.object_priority",
             started,
-            format_args!("keys={}", touched_samples.object_priority.len()),
+            format_args!(
+                "keys={} rows_deleted={}",
+                object_prune.touched, object_prune.rows_deleted
+            ),
         );
 
         let started = Instant::now();
-        self.prune_value_priority_samples(&touched_samples.value_priority_fields)?;
+        let value_prune =
+            self.prune_value_priority_samples(&touched_samples.value_priority_fields)?;
         perf_log.elapsed_event(
             "sqlite.prune.value_priority",
             started,
-            format_args!("fields={}", touched_samples.value_priority_fields.len()),
+            format_args!(
+                "fields={} rows_deleted={}",
+                value_prune.touched, value_prune.rows_deleted
+            ),
         );
 
         if self.heavy_hitter_context_sample_limit > 0 {
             let started = Instant::now();
-            self.prune_heavy_hitter_context_samples(&touched_samples.heavy_hitter_context)?;
+            let heavy_hitter_prune =
+                self.prune_heavy_hitter_context_samples(&touched_samples.heavy_hitter_context)?;
             perf_log.elapsed_event(
                 "sqlite.prune.heavy_hitter_context",
                 started,
-                format_args!("keys={}", touched_samples.heavy_hitter_context.len()),
+                format_args!(
+                    "keys={} rows_deleted={}",
+                    heavy_hitter_prune.touched, heavy_hitter_prune.rows_deleted
+                ),
             );
         } else {
-            perf_log.event("phase=sqlite.prune.heavy_hitter_context skipped=1 keys=0");
+            perf_log
+                .event("phase=sqlite.prune.heavy_hitter_context skipped=1 keys=0 rows_deleted=0");
         }
 
         Ok(())
@@ -625,11 +657,15 @@ impl ProfileWriter {
     fn prune_object_priority_samples(
         &self,
         touched_keys: &BTreeSet<(SampleScope, String)>,
-    ) -> Result<()> {
+    ) -> Result<PruneStats> {
+        let mut stats = PruneStats {
+            touched: touched_keys.len(),
+            rows_deleted: 0,
+        };
         for (scope, key) in touched_keys {
             let scope_sql = scope.as_sql_str();
             let limit = self.object_sample_priority_limits.limit_for(*scope);
-            self.conn.execute(
+            stats.rows_deleted += self.conn.execute(
                 "\
                 DELETE FROM prof_object_sample
                 WHERE sample_kind = 'priority_sample'
@@ -653,7 +689,7 @@ impl ProfileWriter {
                   )
                 ",
                 params![scope_sql, key, limit as i64],
-            )?;
+            )? as u64;
 
             self.conn.execute(
                 "\
@@ -678,12 +714,19 @@ impl ProfileWriter {
                 params![scope_sql, key],
             )?;
         }
-        Ok(())
+        Ok(stats)
     }
 
-    fn prune_value_priority_samples(&self, touched_fields: &BTreeSet<String>) -> Result<()> {
+    fn prune_value_priority_samples(
+        &self,
+        touched_fields: &BTreeSet<String>,
+    ) -> Result<PruneStats> {
+        let mut stats = PruneStats {
+            touched: touched_fields.len(),
+            rows_deleted: 0,
+        };
         for field_profile_id in touched_fields {
-            self.conn.execute(
+            stats.rows_deleted += self.conn.execute(
                 "\
                 DELETE FROM prof_field_value_sample
                 WHERE sample_kind = 'priority_sample'
@@ -705,7 +748,7 @@ impl ProfileWriter {
                   )
                 ",
                 params![field_profile_id, self.value_priority_limit as i64],
-            )?;
+            )? as u64;
 
             self.conn.execute(
                 "\
@@ -729,15 +772,19 @@ impl ProfileWriter {
                 [field_profile_id],
             )?;
         }
-        Ok(())
+        Ok(stats)
     }
 
     fn prune_heavy_hitter_context_samples(
         &self,
         touched_keys: &BTreeSet<(String, String)>,
-    ) -> Result<()> {
+    ) -> Result<PruneStats> {
+        let mut stats = PruneStats {
+            touched: touched_keys.len(),
+            rows_deleted: 0,
+        };
         for (field_profile_id, value_hash) in touched_keys {
-            self.conn.execute(
+            stats.rows_deleted += self.conn.execute(
                 "\
                 DELETE FROM prof_field_value_sample
                 WHERE sample_kind = 'heavy_hitter_context'
@@ -765,9 +812,9 @@ impl ProfileWriter {
                     value_hash,
                     self.heavy_hitter_context_sample_limit as i64
                 ],
-            )?;
+            )? as u64;
         }
-        Ok(())
+        Ok(stats)
     }
 }
 

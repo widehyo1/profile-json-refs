@@ -246,29 +246,31 @@ impl ProfileWriter {
         Ok(())
     }
 
-    pub fn dbstat_summary(&self) -> Option<DbStatSummary> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "\
-                SELECT name, SUM(pgsize) AS bytes
-                FROM dbstat
-                GROUP BY name
-                ORDER BY bytes DESC
-                LIMIT 1
-                ",
-            )
-            .ok()?;
+    pub fn dbstat_summaries(&self, limit: usize) -> Vec<DbStatSummary> {
+        let Ok(mut stmt) = self.conn.prepare(
+            "\
+            SELECT name, SUM(pgsize) AS bytes
+            FROM dbstat
+            GROUP BY name
+            ORDER BY bytes DESC
+            LIMIT ?1
+            ",
+        ) else {
+            return Vec::new();
+        };
 
-        stmt.query_row([], |row| {
+        let Ok(rows) = stmt.query_map([limit as i64], |row| {
             let top_table: String = row.get(0)?;
             let bytes: i64 = row.get(1)?;
             Ok(DbStatSummary {
                 top_table,
                 mb: bytes as f64 / (1024.0 * 1024.0),
             })
-        })
-        .ok()
+        }) else {
+            return Vec::new();
+        };
+
+        rows.filter_map(|row| row.ok()).collect()
     }
 
     pub fn write_source_summary(

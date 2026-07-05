@@ -115,6 +115,8 @@ fn perf_log_dbstat_is_opt_in() {
     ]);
     assert!(with.status.success(), "stderr: {}", stderr(&with));
     assert!(stderr(&with).contains("phase=sqlite.dbstat"));
+    assert!(stderr(&with).contains("rank=1"));
+    assert!(stderr(&with).contains("table=") || stderr(&with).contains("unavailable=1"));
 }
 
 #[test]

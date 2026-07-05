@@ -248,12 +248,19 @@ impl ProfileRunVisitor {
     }
 
     fn emit_dbstat(&mut self) {
-        match self.writer.dbstat_summary() {
-            Some(summary) => self.perf_log.event(&format!(
-                "phase=sqlite.dbstat top_table={} mb={:.3}",
-                summary.top_table, summary.mb
-            )),
-            None => self.perf_log.event("phase=sqlite.dbstat unavailable=1"),
+        let summaries = self.writer.dbstat_summaries(8);
+        if summaries.is_empty() {
+            self.perf_log.event("phase=sqlite.dbstat unavailable=1");
+            return;
+        }
+
+        for (index, summary) in summaries.iter().enumerate() {
+            self.perf_log.event(&format!(
+                "phase=sqlite.dbstat rank={} table={} mb={:.3}",
+                index + 1,
+                summary.top_table,
+                summary.mb
+            ));
         }
     }
 

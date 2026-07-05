@@ -257,6 +257,22 @@ impl ProfileRunVisitor {
         }
     }
 
+    fn emit_sqlite_size(&mut self, out_path: &std::path::Path) {
+        let sqlite_bytes = std::fs::metadata(out_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let wal_bytes = std::fs::metadata(out_path.with_extension("sqlite-wal"))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let shm_bytes = std::fs::metadata(out_path.with_extension("sqlite-shm"))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        self.perf_log.event(&format!(
+            "phase=sqlite.size profile_sqlite_bytes={} profile_sqlite_wal_bytes={} profile_sqlite_shm_bytes={}",
+            sqlite_bytes, wal_bytes, shm_bytes
+        ));
+    }
+
     fn finish(
         mut self,
         source_format: &str,
@@ -286,11 +302,16 @@ impl ProfileRunVisitor {
             final_chunk.value_samples.extend(output.value_samples);
         }
         self.flush_chunk(final_chunk)?;
+        let index_start = Instant::now();
+        self.writer.create_indexes()?;
         self.perf_log
-            .time_result("sqlite.indexes", || self.writer.create_indexes())?;
-        let summary = self
-            .writer
-            .write_source_summary(source_format, self.counters)?;
+            .record("sqlite.indexes", index_start.elapsed());
+        self.perf_log
+            .elapsed_event("sqlite.indexes", index_start, format_args!("created=1"));
+        let summary =
+            self.writer
+                .write_source_summary(source_format, self.counters, &mut self.perf_log)?;
+        self.emit_sqlite_size(&out_path);
         if self.config.perf_log_dbstat {
             self.emit_dbstat();
         }

@@ -275,7 +275,9 @@ impl ProfileWriter {
         &mut self,
         source_format: &str,
         counters: SourceCounters,
+        perf_log: &mut PerfLog,
     ) -> Result<SourceSummary> {
+        let counts_started = Instant::now();
         let total_canonical_path_count = self.query_count(
             "SELECT COUNT(DISTINCT canonical_path) FROM prof_shape",
             "canonical path count",
@@ -294,6 +296,18 @@ impl ProfileWriter {
             "SELECT COUNT(*) FROM prof_field_value",
             "stored value count",
         )?;
+        perf_log.elapsed_event(
+            "sqlite.summary.counts",
+            counts_started,
+            format_args!(
+                "canonical_paths={} site_paths={} shapes={} field_profiles={} stored_values={}",
+                total_canonical_path_count,
+                total_site_path_count,
+                total_shape_count,
+                total_field_profile_count,
+                total_stored_value_count
+            ),
+        );
 
         let summary = SourceSummary {
             total_document_count: counters.total_document_count,
@@ -307,6 +321,7 @@ impl ProfileWriter {
             total_stored_value_count,
         };
 
+        let write_started = Instant::now();
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM prof_source_summary", [])?;
         tx.execute(
@@ -338,6 +353,11 @@ impl ProfileWriter {
             ],
         )?;
         tx.commit()?;
+        perf_log.elapsed_event(
+            "sqlite.summary.write",
+            write_started,
+            format_args!("rows=1"),
+        );
 
         Ok(summary)
     }

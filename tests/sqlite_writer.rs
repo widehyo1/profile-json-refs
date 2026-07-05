@@ -555,6 +555,7 @@ fn source_summary_is_derived_from_persisted_profile_counts() {
                 total_array_count: 3,
                 total_scalar_count: 4,
             },
+            &mut perf_log,
         )
         .expect("write source summary");
 

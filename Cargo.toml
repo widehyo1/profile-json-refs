@@ -1,6 +1,6 @@
 [package]
 name = "profile-json-refs"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 description = "Profile JSON/JSONL values using refs artifacts produced by dump-json-refs."
 repository = "https://github.com/widehyo1/profile-json-refs"

@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Debug, Parser)]
-#[command(name = "profile-json-refs")]
-#[command(about = "Profile JSON/JSONL values using dump-json-refs structural refs")]
+#[command(
+    name = "profile-json-refs",
+    version,
+    about = "Profile JSON/JSONL values using dump-json-refs structural refs"
+)]
 pub struct CliArgs {
     /// Input JSON/JSONL file. Stdin is not supported in v0.1.0.
     pub input_file: PathBuf,

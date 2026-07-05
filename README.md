@@ -1,10 +1,8 @@
 # profile-json-refs
 
-> Release status: `v0.1.0-rc.2`. This candidate incorporates the large-input value-sampling performance fix and is intended to become `v0.1.0` after regression and large JSONL smoke validation.
+`profile-json-refs` profiles value-level facts from JSON and JSONL snapshots.
 
-`profile-json-refs` is a value-level profiling tool for JSON and JSONL snapshots.
-
-It runs downstream of [`dump-json-refs`](https://github.com/widehyo1/dump-json-refs). `dump-json-refs` produces structural refs in `refs/schemas.sqlite`; `profile-json-refs` consumes that refs database together with the original JSON/JSONL source file and writes `profile.sqlite`.
+It is designed to run after [`dump-json-refs`](https://github.com/widehyo1/dump-json-refs). `dump-json-refs` extracts structural reference facts into `refs/schemas.sqlite`; `profile-json-refs` reads the original source file together with that refs database and writes a value-profile database, `profile.sqlite`.
 
 ```text
 JSON / JSONL source
@@ -13,12 +11,10 @@ JSON / JSONL source
         │
         └── profile-json-refs ────► profile.sqlite
                  ▲
-                 └── consumes refs/schemas.sqlite
+                 └── reads refs/schemas.sqlite
 ```
 
-The goal is to produce best-effort value-level facts for human inspection and UX presentation.
-
----
+The purpose is to make a finite JSON/JSONL snapshot easier to inspect, reverse-engineer, and present in higher-level UX layers. It records observable facts about values, field profiles, object samples, and shape-aware value distributions. It does not decide the final relational model.
 
 ## Why this exists
 
@@ -32,67 +28,56 @@ The goal is to produce best-effort value-level facts for human inspection and UX
 - Which field names have multiple observed types?
 ```
 
-`profile-json-refs` adds value-level facts:
+`profile-json-refs` adds value-level questions:
 
 ```text
-- What values appear under this field?
-- Is this field mostly unique?
-- Does this field look categorical?
+- What values appear under this field profile?
+- Is this field mostly unique, mostly null, or mostly categorical?
 - Which values are frequent enough to inspect?
-- Which object samples represent each navigation level?
-- Does the same field name behave differently across shapes or types?
+- Which source-backed samples represent this object or field?
+- Does the same field name behave differently across shapes, paths, or observed types?
 ```
 
-These facts are useful when reverse-engineering a single JSON/JSONL snapshot into a relational or tabular representation.
-
----
+These facts are useful when turning raw JSON/JSONL into candidate tables, columns, categories, validation rules, and human-readable inspection views.
 
 ## Scope
 
-`profile-json-refs` profiles one input snapshot at a time.
+`profile-json-refs` profiles one source snapshot at a time.
 
-It does not track lineage across snapshots. For a different source snapshot, run `dump-json-refs` and `profile-json-refs` again.
-
-### Inputs
+Inputs:
 
 ```text
-required:
-  - original JSON or JSONL source file
-  - refs/schemas.sqlite produced by dump-json-refs
+- a JSON or JSONL source file
+- a refs SQLite database produced by dump-json-refs
 ```
 
-### Output
+Output:
 
 ```text
 profile.sqlite
 ```
 
-The output database contains `prof_*` fact tables. It is a one-shot artifact, not a run history database.
-
----
+The output database contains `prof_*` fact tables. It is a materialized profile artifact for the current source snapshot, not a migration log or multi-run history database.
 
 ## Non-goals
 
 `profile-json-refs` does not own:
 
 ```text
-- generating refs
-- producing refs/schemas.sqlite
-- rendering refs JSON files or site path symlinks
-- accepting stdin in v0.1.0
-- generating DBML, SQL DDL, or parquet
+- generating structural refs
+- rendering refs JSON files or site-path symlinks
 - deciding final table boundaries
 - deciding primary keys or foreign keys
-- tracking lineage across snapshots
+- generating DBML, SQL DDL, parquet, or application code
+- tracking lineage across multiple snapshots
+- merging profiles from multiple runs
 ```
 
-It may expose facts that help inspect candidate keys, categorical values, sparse fields, shape variants, and value distributions. It does not make final materialization decisions.
-
----
+It provides facts that can support those later decisions.
 
 ## Shape-aware profiling
 
-A value is profiled in structural context. The same field name may appear under different paths, schema paths, field combinations, or observed type contexts.
+A value is profiled in structural context. The same field name may have different meaning, type behavior, nullability, or value distribution depending on where and how it appears.
 
 The expected inspection path is:
 
@@ -100,12 +85,12 @@ The expected inspection path is:
 canonical path
   -> site path
     -> field combination
-      -> shape with type
+      -> shape with observed field types
         -> object samples
-        -> field value profile
+        -> field value profiles
 ```
 
-`profile-json-refs` preserves the keys needed for this path:
+The profile keeps stable keys needed for this navigation path:
 
 ```text
 canonical_path
@@ -118,101 +103,95 @@ field_profile_id
 value_hash
 ```
 
----
-
-## Sampling
-
-Sampling has two responsibilities:
-
-```text
-1. guarantee that every materialized navigation key has at least one source-backed sample;
-2. provide bounded representative samples without unbounded memory growth.
-```
-
-Object samples are stored in `prof_object_sample` for these grains:
-
-```text
-canonical_path
-canonical_path + site_path
-canonical_path + site_path + field_set_hash
-canonical_path + site_path + field_set_hash + type_set_hash
-```
-
-Each materialized key gets a mandatory `first_seen` sample. The scanner also records a best-effort `first_non_empty` sample when a structurally non-empty candidate appears. Additional representative samples are selected with chunk-mergeable deterministic priority sampling.
-
-This avoids the problem where the first sample is `{}` or `[]` while later rows contain meaningful structure.
-
----
-
 ## Value-level facts
 
-Important field-level facts include:
+The profile database is intended to expose observable, source-backed facts such as:
 
 ```text
 - profiled count
 - null and non-null counts
-- empty object / empty array counts
-- approximate or exact distinct count
-- stored value count
+- empty object and empty array counts
+- observed type distribution
+- exact or approximate distinct count
+- retained value count
 - frequent value candidates
-- source-backed value samples
+- representative value samples
+- representative object samples
 - value text truncation status
-- value source and count method
+- source path for retained samples
+- count method used for retained values
 ```
 
-`profile-json-refs` should prefer observable facts over opaque scores.
+Approximate or sampled facts should be read as bounded profile facts, not as a complete dump of every observed value.
 
----
+## Sampling and bounded profiling
 
-## Algorithms
+Large JSON/JSONL inputs can contain many repeated objects, high-cardinality fields, and large scalar values. `profile-json-refs` uses bounded profiling techniques so that the output stays inspectable and finite.
 
-`profile-json-refs` uses bounded algorithms to handle large finite JSON/JSONL inputs:
+The profiler may use:
 
 ```text
-HyperLogLog:
-  approximate distinct count per field profile
-
-Space-Saving:
-  heavy hitter candidates for frequent values
-
-Deterministic priority sampling:
-  chunk-mergeable bounded object/value samples
-
-Bounded exact counters:
-  exact full distribution for small field profiles
+- approximate distinct counters for field-level cardinality
+- bounded exact counters for small distributions
+- heavy-hitter tracking for frequent value candidates
+- deterministic priority sampling for bounded object and value samples
+- size limits for stored JSON/text fragments
 ```
 
-Approximate and sampled facts are always labeled. A missing value row does not necessarily mean the value was never observed; it may only mean it was not retained by the bounded profile.
-
-`v0.1.0-rc.2` uses safer large-input defaults:
+Sampling has two responsibilities:
 
 ```text
-heavy_hitter_context_sample_limit = 0
-value_json_limit_bytes = 1024
-parent_object_json_limit_bytes = 1024
-priority_sample_limit_per_field_profile = 4
-value_text_limit_bytes = 512
+1. keep source-backed examples for materialized navigation keys;
+2. avoid unbounded memory and output growth on large snapshots.
 ```
 
-Heavy hitter context rows are disabled by default. The Space-Saving tracker still produces heavy hitter candidate facts in `prof_field_value`.
+A missing retained value row does not prove that the value never appeared. It may only mean the value was not retained by the bounded profile policy.
 
----
+## CLI contract
 
-## Basic usage
+Basic usage:
 
 ```bash
 dump-json-refs data.jsonl --jsonl --outdir refs
 profile-json-refs data.jsonl --jsonl
-
-# Large-run diagnostics
-profile-json-refs data.jsonl --jsonl --perf-log --perf-log-file perf.log
 ```
 
-Defaults:
+Default paths:
 
 ```text
---refs refs/schemas.sqlite
---out  profile.sqlite
+refs database: refs/schemas.sqlite
+output:        profile.sqlite
 ```
 
-Default stdout prints only the output path, `prof_source_summary`-level counts, and elapsed time. Detailed inspection should use `profile.sqlite`.
+Common options:
+
+```bash
+profile-json-refs data.jsonl --jsonl
+profile-json-refs data.json  --refs refs/schemas.sqlite --out profile.sqlite
+profile-json-refs data.jsonl --perf-log --perf-log-dbstat 2>perf.log
+```
+
+The command writes the profile database and prints a compact summary to stdout:
+
+```text
+profile-json-refs: wrote profile.sqlite
+
+documents: ...
+objects: ...
+arrays: ...
+scalars: ...
+canonical_paths: ...
+site_paths: ...
+shapes: ...
+field_profiles: ...
+stored_values: ...
+elapsed: ...s
+```
+
+Performance diagnostics are written to stderr when enabled. They are diagnostic output, not part of the stable data artifact.
+
+## Output artifact
+
+`profile.sqlite` is the primary artifact. Downstream tools should inspect the `prof_*` tables rather than scraping stdout.
+
+The stdout summary is intended for quick command-line confirmation. The SQLite database is the contract for further inspection, UI layers, and later decision/modeling tools.

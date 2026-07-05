@@ -399,6 +399,11 @@ Example stderr:
 [perf] flush.fields=2.881s
 [perf] flush.values=3.916s
 [perf] sqlite.indexes=1.041s
+[perf] t=12.345 phase=scan.accumulators pending_shapes=120 pending_shape_fields=940 pending_object_samples=320 pending_value_samples=10000 field_value_accumulators=940
+[perf] t=12.456 phase=sqlite.flush.value_samples elapsed_ms=58 rows=10000
+[perf] t=12.470 phase=sqlite.prune.value_priority elapsed_ms=14 fields=87
+[perf] t=41.200 phase=sqlite.summary.counts elapsed_ms=3 canonical_paths=42 site_paths=42 shapes=120 field_profiles=940 stored_values=4000
+[perf] t=41.220 phase=sqlite.size profile_sqlite_bytes=12345678 profile_sqlite_wal_bytes=0 profile_sqlite_shm_bytes=0
 ```
 
 ---

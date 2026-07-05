@@ -1,6 +1,6 @@
 # Performance Requirements
 
-Release status: `v0.1.0-rc.2`.
+Release status: `v0.1.1` planned performance-diagnostic patch over the shipped `v0.1.0` baseline.
 
 rc.2 incorporates the large-input value-sampling fix: heavy hitter context samples are disabled by default, value context payloads are smaller by default, and `--perf-log` must provide useful progress before process completion.
 
@@ -198,6 +198,8 @@ When thresholds are exceeded, the field profile must fall back to HLL + heavy hi
 
 `--perf-log` must emit useful progress before process completion. Final-only perf output is insufficient for large JSONL runs.
 
+`v0.1.1` does not add CLI options or stdout output. It increases diagnostic density inside the existing requested perf-log stream by adding scan accumulator sizes, SQLite per-table flush timings, prune-family timings, summary/index timings, and SQLite file-size facts.
+
 Destinations:
 
 ```text
@@ -220,8 +222,8 @@ scan.progress:
 flush.chunk:
   chunk index, object sample rows, value sample rows, shape rows, field rows
 
-sqlite.prune_samples:
-  prune kind, touched keys, rows before/after when practical, elapsed
+sqlite.prune.object_priority / sqlite.prune.value_priority / sqlite.prune.heavy_hitter_context:
+  touched keys or fields and elapsed milliseconds
 
 sqlite.rows:
   prof_shape, prof_shape_field, prof_object_sample, prof_field_value_sample,
@@ -260,10 +262,11 @@ stdout.summary
 Example progress output:
 
 ```text
-[perf] t=31.882s phase=scan.progress documents=100000 objects=432901 arrays=1022 scalars=981223
-[perf] t=35.104s phase=flush.chunk index=12 shapes=41 fields=320 object_samples=200 value_samples=10000
-[perf] t=35.891s phase=sqlite.prune_samples kind=value_priority touched_fields=831 rows_before=48210 rows_after=32000 elapsed=0.402s
-[perf] t=36.002s phase=sqlite.size db=214958080 wal=12582912 shm=163840
+[perf] t=31.882 phase=scan.progress documents=100000 objects=432901 arrays=1022 scalars=981223
+[perf] t=31.883 phase=scan.accumulators pending_shapes=120 pending_shape_fields=940 pending_object_samples=320 pending_value_samples=10000 field_value_accumulators=940
+[perf] t=35.104 phase=flush.chunk index=12 shapes=41 fields=320 object_samples=200 field_summaries=0 field_values=0 value_samples=10000
+[perf] t=35.891 phase=sqlite.prune.value_priority elapsed_ms=402 fields=831
+[perf] t=36.002 phase=sqlite.size profile_sqlite_bytes=214958080 profile_sqlite_wal_bytes=12582912 profile_sqlite_shm_bytes=163840
 ```
 
 When enabled, perf logging must be flushed periodically so `perf.log` can diagnose a long-running process while it is still running.
